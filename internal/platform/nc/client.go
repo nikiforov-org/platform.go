@@ -109,7 +109,7 @@ type KVConfig struct {
 type ReconnectConfig struct {
 	// MaxAttempts — максимальное число попыток переподключения.
 	// -1 означает бесконечный реконнект (рекомендуется для production,
-	// т.к. Nomad и так перезапустит процесс при необходимости).
+	// т.к. Nomad перезапустит процесс при необходимости).
 	MaxAttempts int
 
 	// WaitDuration — пауза между попытками переподключения.
@@ -135,7 +135,7 @@ func DefaultConfig() Config {
 		},
 		KV: KVConfig{
 			BucketName:   "platform_state",
-			Replicas:     3, // переопределяется через NATS_KV_REPLICAS (в dev: 1)
+			Replicas:     0, // 0 — автоопределение по размеру кластера при подключении
 			History:      5, // последние 5 ревизий ключа
 			MaxValueSize: 0, // без дополнительного ограничения на уровне Go
 		},
@@ -157,6 +157,7 @@ func (c Config) url() string {
 //  1. Подключение к NATS с авторизацией и настройками реконнекта.
 //  2. Инициализация JetStream.
 //  3. Опциональная инициализация KV-бакета (если KV.BucketName не пустой).
+//     Если KV.Replicas == 0, число реплик определяется автоматически по размеру кластера.
 //
 // При любой ошибке после шага 1 соединение закрывается — утечки соединения не будет.
 func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
@@ -202,7 +203,17 @@ func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
 	}
 
 	if cfg.KV.BucketName != "" {
-		if err := client.initKV(cfg.KV); err != nil {
+		kvCfg := cfg.KV
+		if kvCfg.Replicas <= 0 {
+			// Определяем число реплик по числу нод кластера.
+			// conn.Servers() возвращает все известные ноды (seed + обнаруженные через INFO).
+			kvCfg.Replicas = len(nc.Servers())
+			if kvCfg.Replicas < 1 {
+				kvCfg.Replicas = 1
+			}
+			log.Debug().Int("replicas", kvCfg.Replicas).Str("bucket", kvCfg.BucketName).Msg("NATS KV: replicas определены автоматически")
+		}
+		if err := client.initKV(kvCfg); err != nil {
 			nc.Close()
 			return nil, err
 		}

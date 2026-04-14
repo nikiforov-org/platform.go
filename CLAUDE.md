@@ -4,22 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Local Development
 
+Dev-окружение запускается скриптом `deployments/mode/dev/start.sh`:
+
 ```bash
-# 1. Скопируйте и заполните env-файл
-cp deployments/dev/.env.example deployments/dev/.env
+# 1 нода — NATS single-node + Nomad -dev (быстрый старт)
+./deployments/mode/dev/start.sh
 
-# 2. Запустите инфраструктуру (NATS + PostgreSQL)
-make infra
+# N нод — NATS cluster + Nomad cluster из N агентов
+./deployments/mode/dev/start.sh 3
 
-# 3. Запустите нужные сервисы в отдельных терминалах
-make run-gateway
-make run-xauth
-make run-xhttp
-make run-xws
+# Остановить всё
+./deployments/mode/dev/start.sh stop
 ```
 
-`make infra` поднимает однонодовый NATS с JetStream и PostgreSQL через Docker Compose.
-NATS-мониторинг доступен на http://localhost:8222.
+Скрипт поднимает Docker Compose (NATS + PostgreSQL), собирает бинарники в `./bin/`, запускает Nomad и деплоит джобы. Подробнее: `deployments/mode/dev/dev.md`.
 
 ## Build Commands
 
@@ -62,7 +60,7 @@ HTTP Client → Gateway (:8080) → NATS (:4222) → [xhttp | xauth | xws]
 ```
 
 **Gateway** (`internal/services/gateway/`) is the sole HTTP entry point. Routes:
-- `GET /health` — health check (bypasses rate limiting and Origin); `200` if NATS connected, `503` otherwise. Used by Nomad.
+- `GET /health` — health check (bypasses rate limiting and Origin); `200` if NATS connected, `503` otherwise.
 - `/v1/{service}/{method}` — proxies HTTP → NATS Request-Reply.
 - `/v1/{service}/ws` — upgrades to WebSocket, bridges to NATS Pub/Sub.
 
@@ -114,13 +112,34 @@ All configuration is loaded from environment variables only. Each service has a 
 | xauth   | `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_ACCESS_SECRET`, `AUTH_REFRESH_SECRET` |
 | gateway | `ALLOWED_HOSTS` (comma-separated origins, e.g. `localhost:3000,example.com`) |
 
-All services share `NATS_HOST` (default `127.0.0.1`), `NATS_PORT` (default `4222`), `NATS_USER`, `NATS_PASSWORD`, `NATS_KV_REPLICAS` (default `3`; **set to `1` for single-node dev**), `LOG_LEVEL` (default `info`; values: `debug`, `info`, `warn`, `error`).
+All services share `NATS_HOST` (default `127.0.0.1`), `NATS_PORT` (default `4222`), `NATS_USER`, `NATS_PASSWORD`, `LOG_LEVEL` (default `info`; values: `debug`, `info`, `warn`, `error`).
+
+`NATS_KV_REPLICAS` не задаётся — платформа определяет число реплик автоматически по размеру кластера (`len(conn.Servers())`) после подключения к NATS.
 
 **Important dev-only overrides:**
-- `NATS_KV_REPLICAS=1` — production default is `3` (cluster), single-node dev requires `1`
 - `COOKIE_SECURE=false` — production default is `true` (HTTPS); local HTTP dev requires `false` or browsers won't send auth cookies
 - `ACCESS_SECRET` in xhttp/xws must equal `AUTH_ACCESS_SECRET` in xauth — they share the same HMAC key
 
 ## Deployment
 
-Services are deployed via **Nomad with raw exec driver** (no Docker). The NATS cluster uses DNS-based route discovery (`deployments/nats/nats.conf`). CI/CD: `go build` → `scp` binary → `nomad job run`.
+Services are deployed via **Nomad with raw exec driver** (no Docker). Each node runs Nomad in hybrid server+client mode.
+
+CI/CD flow:
+1. GitHub Actions builds static binaries: `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/...`
+2. Binaries are copied to `/usr/local/bin/` on all servers via `scp`
+3. `nomad job run deployments/nomad/apps.nomad` triggers rolling update
+
+Key Nomad behaviors:
+- `/health` endpoint used by Nomad for self-healing — Gateway returns `200` if NATS is up, `503` otherwise; Nomad restarts on failure
+- Rolling update: Nomad restarts tasks one at a time → zero-downtime deploys
+- Log rotation: `logs { max_files = 5, max_file_size = 10 }` in job file — no external log agents needed
+- `ReconnectConfig.MaxAttempts = -1` (infinite reconnect) — Nomad handles process lifecycle, not the app
+
+NATS cluster (production) uses DNS-based route discovery via `deployments/nats/nats.conf`. Services connect to local NATS on `127.0.0.1:4222`.
+
+Nomad configs: `deployments/services/nomad/nomad.hcl` (agent), `deployments/services/nomad/platform.nomad` (platform job), `deployments/services/nomad/xservices.nomad` (demo services job).
+
+Dev mode: `deployments/mode/dev/` — Docker Compose для NATS/PostgreSQL, `dev.vars` для переменных, инструкции в `dev.md`.
+Prod mode: `deployments/mode/prod/` — шаблон `prod.vars.example`, инструкции в `prod.md`.
+
+Firewall ports required between nodes: 4222/TCP (NATS client), 6222/TCP (NATS cluster), 4646/TCP (Nomad HTTP API), 4647–4648/TCP+UDP (Nomad RPC/Serf).

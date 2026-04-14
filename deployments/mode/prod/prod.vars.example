@@ -1,0 +1,33 @@
+# deployments/mode/prod/prod.vars.example
+#
+# Шаблон переменных для production-деплоя.
+# Скопируйте в prod.vars, заполните реальными значениями.
+# Не коммитьте prod.vars в репозиторий.
+#
+# Использование:
+#   nomad job run -var-file=prod.vars deployments/services/nomad/platform.nomad
+#   nomad job run -var-file=prod.vars deployments/services/nomad/xservices.nomad
+
+# NATS
+nats_user     = ""
+nats_password = ""
+
+# Gateway
+allowed_hosts            = ""   # например: "example.com,api.example.com"
+gateway_auth_rate_prefix = "/v1/xauth/"
+log_level                = "info"
+
+# xauth
+auth_username       = ""
+auth_password       = ""
+auth_access_secret  = ""   # минимум 32 случайных байта: openssl rand -hex 32
+auth_refresh_secret = ""   # минимум 32 случайных байта: openssl rand -hex 32
+cookie_domain       = ""   # например: ".example.com"
+cookie_secure       = "true"
+
+# xhttp
+database_url  = ""   # postgres://user:password@host:5432/db?sslmode=require
+access_secret = ""   # должен совпадать с auth_access_secret
+
+# xws
+inactivity_timeout = "3m"

@@ -17,8 +17,7 @@ import (
 //	NATS_PORT         — порт NATS-сервера       (4222)
 //	NATS_USER         — логин авторизации       ("")
 //	NATS_PASSWORD     — пароль авторизации      ("")
-//	NATS_KV_REPLICAS  — число реплик KV-бакета  (3; для dev: 1)
-//	DATABASE_URL      — DSN PostgreSQL           (обязательно)
+//	DATABASE_URL   — DSN PostgreSQL      (обязательно)
 //	CACHE_TTL         — TTL кэша                ("30s")
 type Config struct {
 	NATS        nc.Config
@@ -41,7 +40,7 @@ func LoadConfig() Config {
 	natsCfg.Auth.Password = utils.GetEnv("NATS_PASSWORD", "")
 	// Собственный KV-бакет сервиса, изолированный от platform_state.
 	natsCfg.KV.BucketName = "xhttp_cache"
-	natsCfg.KV.Replicas = utils.GetEnv("NATS_KV_REPLICAS", natsCfg.KV.Replicas)
+	// Replicas не задаётся — NewClient определяет число реплик автоматически.
 	natsCfg.KV.History = 1 // Кэш не нуждается в истории ревизий.
 
 	return Config{

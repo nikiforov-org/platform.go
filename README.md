@@ -69,13 +69,25 @@
 | Nomad + NATS | 100 MB | Системные демоны |
 | Apps (Total) | Остаток | Доступно для Go-бинарников |
 
+## Локальная разработка
+
+Dev-окружение с Nomad запускается одной командой:
+
+```bash
+./deployments/mode/dev/start.sh      # 1 нода
+./deployments/mode/dev/start.sh 3    # 3 ноды (NATS-кластер + Nomad-кластер)
+./deployments/mode/dev/start.sh stop # остановить
+```
+
+Подробная инструкция, проверка self-healing и rolling update — в `deployments/mode/dev/dev.md`.
+
 ## Схема CI/CD (GitHub Actions)
 
 Деплой происходит без участия Docker Registry, напрямую на серверы.
 
 1. Сборка: GitHub Actions собирает бинарники: `GOOS=linux GOARCH=amd64 go build`.
 2. Доставка: Через `scp-action` бинарники копируются на все сервера в `/usr/local/bin/`.
-3. Обновление: GitHub Actions через SSH выполняет `nomad job run apps.nomad` на одном из серверов.
+3. Обновление: GitHub Actions через SSH выполняет `nomad job run` на одном из серверов.
 4. Rolling Update: Nomad по очереди перезапускает процессы на узлах, обеспечивая Zero Downtime.
 
 ## Сетевые доступы (Firewall)
@@ -158,8 +170,22 @@ KV использовать только для кэша, сессий и вре
 │   └── cookie.go                     # Парсинг и сборка Set-Cookie заголовков
 │
 ├── deployments/
-│   └── nats/
-│       └── nats.conf                 # Конфигурация NATS-кластера (статическая, DNS-роуты)
+│   ├── services/                     # Описания сервисов — конфиги и job-файлы
+│   │   ├── nats/
+│   │   │   └── nats.conf             # NATS-кластер: DNS Discovery, JetStream, auth
+│   │   └── nomad/
+│   │       ├── nomad.hcl             # Nomad-агент: hybrid server+client, raw_exec
+│   │       ├── platform.nomad        # Джоб Gateway (платформа)
+│   │       └── xservices.nomad       # Джоб демо-сервисов (xauth, xhttp, xws)
+│   └── mode/                         # Окружения и управление запуском
+│       ├── dev/
+│       │   ├── docker-compose.yml    # NATS-кластер + PostgreSQL для локальной разработки
+│       │   ├── nats.conf             # NATS-конфиг для Docker (Docker DNS routing)
+│       │   ├── dev.vars              # Переменные для nomad job run в dev
+│       │   └── dev.md                # Инструкция по локальному запуску с Nomad
+│       └── prod/
+│           ├── prod.vars.example     # Шаблон переменных для production
+│           └── prod.md               # Инструкция по production-деплою
 │
 ├── go.mod
 └── go.sum
@@ -187,7 +213,11 @@ KV использовать только для кэша, сессий и вре
 
 **`deployments/`**
 
-Конфигурационные файлы для инфраструктуры (NATS, Nomad). Не содержит Go-кода.
+Конфигурационные файлы для инфраструктуры. Не содержит Go-кода.
+
+- `services/` — шаблоны и описания сервисов, не зависящие от окружения (NATS-конфиг, Nomad job-файлы с переменными).
+- `mode/dev/` — всё для локальной разработки: Docker Compose, dev-переменные, инструкции.
+- `mode/prod/` — шаблон prod-переменных и инструкции по production-деплою.
 
 **Именование демо-сервисов**
 
