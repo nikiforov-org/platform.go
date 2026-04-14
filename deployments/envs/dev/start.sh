@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deployments/mode/dev/start.sh
+# deployments/envs/dev/start.sh
 #
 # Запуск и остановка dev-окружения.
 #
@@ -17,8 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 VARS_FILE="$SCRIPT_DIR/dev.vars"
-JOB_PLATFORM="$ROOT_DIR/deployments/services/nomad/platform.nomad"
-JOB_XSERVICES="$ROOT_DIR/deployments/services/nomad/xservices.nomad"
+JOB_PLATFORM="$ROOT_DIR/deployments/infra/nomad/platform.nomad"
+JOB_XSERVICES="$ROOT_DIR/deployments/infra/nomad/xservices.nomad"
 BIN_DIR="$ROOT_DIR/bin"
 NOMAD_DATA_BASE="/tmp/platform-dev"
 PID_FILE="/tmp/platform-dev-pids"

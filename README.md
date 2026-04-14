@@ -74,12 +74,12 @@
 Dev-окружение с Nomad запускается одной командой:
 
 ```bash
-./deployments/mode/dev/start.sh      # 1 нода
-./deployments/mode/dev/start.sh 3    # 3 ноды (NATS-кластер + Nomad-кластер)
-./deployments/mode/dev/start.sh stop # остановить
+./deployments/envs/dev/start.sh      # 1 нода
+./deployments/envs/dev/start.sh 3    # 3 ноды (NATS-кластер + Nomad-кластер)
+./deployments/envs/dev/start.sh stop # остановить
 ```
 
-Подробная инструкция, проверка self-healing и rolling update — в `deployments/mode/dev/dev.md`.
+Подробная инструкция, проверка self-healing и rolling update — в `deployments/envs/dev/dev.md`.
 
 ## Схема CI/CD (GitHub Actions)
 

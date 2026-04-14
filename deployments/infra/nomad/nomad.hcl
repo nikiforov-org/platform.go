@@ -1,4 +1,4 @@
-# deployments/services/nomad/nomad.hcl
+# deployments/infra/nomad/nomad.hcl
 #
 # Конфигурация Nomad-агента в гибридном режиме (server + client).
 # Один файл для всех нод.

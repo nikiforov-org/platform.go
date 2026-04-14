@@ -10,13 +10,13 @@
 
 ```bash
 # 1 нода (NATS single-node + Nomad -dev)
-./deployments/mode/dev/start.sh
+./deployments/envs/dev/start.sh
 
 # 3 ноды (NATS cluster + Nomad cluster из 3 агентов)
-./deployments/mode/dev/start.sh 3
+./deployments/envs/dev/start.sh 3
 
 # Остановить всё
-./deployments/mode/dev/start.sh stop
+./deployments/envs/dev/start.sh stop
 ```
 
 Скрипт автоматически:
@@ -47,9 +47,9 @@ Health check: `curl http://localhost:8080/health`
 
 ```bash
 nomad job run \
-  -var-file=deployments/mode/dev/dev.vars \
+  -var-file=deployments/envs/dev/dev.vars \
   -var="binary_dir=$PWD/bin" \
-  deployments/services/nomad/platform.nomad
+  deployments/infra/nomad/platform.nomad
 ```
 
 ## Проверка поведения кластера (N > 1)
@@ -60,9 +60,9 @@ nomad job run \
 # Пересобрать и переразвернуть
 go build -o bin/gateway ./cmd/gateway
 nomad job run \
-  -var-file=deployments/mode/dev/dev.vars \
+  -var-file=deployments/envs/dev/dev.vars \
   -var="binary_dir=$PWD/bin" \
-  deployments/services/nomad/platform.nomad
+  deployments/infra/nomad/platform.nomad
 
 nomad deployment list   # наблюдать за rolling update
 ```

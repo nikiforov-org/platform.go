@@ -1,12 +1,12 @@
-# deployments/services/nomad/platform.nomad
+# deployments/infra/nomad/platform.nomad
 #
 # Nomad-джоб платформы: Gateway.
 # Бинарники скачиваются из GitHub Releases через блок artifact.
 #
 # Деплой:
 #   nomad job run \
-#     -var-file=deployments/mode/prod/prod.vars \
-#     deployments/services/nomad/platform.nomad
+#     -var-file=deployments/envs/prod/prod.vars \
+#     deployments/infra/nomad/platform.nomad
 
 variable "github_repo" {
   description = "GitHub репозиторий в формате owner/repo, например: myorg/platform.go"

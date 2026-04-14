@@ -1,12 +1,12 @@
-# deployments/services/nomad/xservices.nomad
+# deployments/infra/nomad/xservices.nomad
 #
 # Nomad-джоб демо-сервисов (xauth, xhttp, xws).
 # Бинарники скачиваются из GitHub Releases через блок artifact.
 #
 # Деплой:
 #   nomad job run \
-#     -var-file=deployments/mode/prod/prod.vars \
-#     deployments/services/nomad/xservices.nomad
+#     -var-file=deployments/envs/prod/prod.vars \
+#     deployments/infra/nomad/xservices.nomad
 
 variable "github_repo" {
   description = "GitHub репозиторий в формате owner/repo, например: myorg/platform.go"

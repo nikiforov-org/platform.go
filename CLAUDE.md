@@ -4,20 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Local Development
 
-Dev-окружение запускается скриптом `deployments/mode/dev/start.sh`:
+Dev-окружение запускается скриптом `deployments/envs/dev/start.sh`:
 
 ```bash
 # 1 нода — NATS single-node + Nomad -dev (быстрый старт)
-./deployments/mode/dev/start.sh
+./deployments/envs/dev/start.sh
 
 # N нод — NATS cluster + Nomad cluster из N агентов
-./deployments/mode/dev/start.sh 3
+./deployments/envs/dev/start.sh 3
 
 # Остановить всё
-./deployments/mode/dev/start.sh stop
+./deployments/envs/dev/start.sh stop
 ```
 
-Скрипт поднимает Docker Compose (NATS + PostgreSQL), собирает бинарники в `./bin/`, запускает Nomad и деплоит джобы. Подробнее: `deployments/mode/dev/dev.md`.
+Скрипт поднимает Docker Compose (NATS + PostgreSQL), собирает бинарники в `./bin/`, запускает Nomad и деплоит джобы. Подробнее: `deployments/envs/dev/dev.md`.
 
 ## Build Commands
 
@@ -126,8 +126,8 @@ Services are deployed via **Nomad with raw exec driver** (no Docker). Each node 
 
 CI/CD flow (GitHub Releases):
 1. Push a tag `v*` → GitHub Actions (`.github/workflows/release.yml`) builds static binaries for `linux/amd64` and `linux/arm64`, packages each into `.tar.gz`, creates a GitHub Release.
-2. Set `github_repo`, `version`, and secrets in `deployments/mode/prod/prod.vars`.
-3. `nomad job run -var-file=prod.vars deployments/services/nomad/platform.nomad` — Nomad downloads binaries from the Release via `artifact {}` block and performs rolling update.
+2. Set `github_repo`, `version`, and secrets in `deployments/envs/prod/prod.vars`.
+3. `nomad job run -var-file=prod.vars deployments/infra/nomad/platform.nomad` — Nomad downloads binaries from the Release via `artifact {}` block and performs rolling update.
 
 Rollback: change `version` in `prod.vars` and re-run `nomad job run`.
 
@@ -137,11 +137,11 @@ Key Nomad behaviors:
 - Log rotation: `logs { max_files = 5, max_file_size = 10 }` in job file — no external log agents needed
 - `ReconnectConfig.MaxAttempts = -1` (infinite reconnect) — Nomad handles process lifecycle, not the app
 
-NATS cluster (production) uses DNS-based route discovery via `deployments/nats/nats.conf`. Services connect to local NATS on `127.0.0.1:4222`.
+NATS cluster (production) uses DNS-based route discovery via `deployments/infra/nats/nats.conf`. Services connect to local NATS on `127.0.0.1:4222`.
 
-Nomad configs: `deployments/services/nomad/nomad.hcl` (agent), `deployments/services/nomad/platform.nomad` (platform job), `deployments/services/nomad/xservices.nomad` (demo services job).
+Nomad configs: `deployments/infra/nomad/nomad.hcl` (agent), `deployments/infra/nomad/platform.nomad` (platform job), `deployments/infra/nomad/xservices.nomad` (demo services job).
 
-Dev mode: `deployments/mode/dev/` — Docker Compose для NATS/PostgreSQL, `dev.vars` для переменных, инструкции в `dev.md`.
-Prod mode: `deployments/mode/prod/` — шаблон `prod.vars.example`, инструкции в `prod.md`.
+Dev mode: `deployments/envs/dev/` — Docker Compose для NATS/PostgreSQL, `dev.vars` для переменных, инструкции в `dev.md`.
+Prod mode: `deployments/envs/prod/` — шаблон `prod.vars.example`, инструкции в `prod.md`.
 
 Firewall ports required between nodes: 4222/TCP (NATS client), 6222/TCP (NATS cluster), 4646/TCP (Nomad HTTP API), 4647–4648/TCP+UDP (Nomad RPC/Serf).

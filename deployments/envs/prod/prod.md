@@ -20,7 +20,7 @@ mkdir -p /var/lib/nats/jetstream /etc/nats
 chown -R nats:nats /var/lib/nats
 
 # Скопировать конфиг
-scp deployments/services/nats/nats.conf user@node:/etc/nats/nats.conf
+scp deployments/infra/nats/nats.conf user@node:/etc/nats/nats.conf
 
 # Создать systemd-юнит /etc/systemd/system/nats.service:
 # [Unit]
@@ -46,7 +46,7 @@ systemctl enable --now nats
 
 ```bash
 mkdir -p /var/lib/nomad /etc/nomad
-scp deployments/services/nomad/nomad.hcl user@node:/etc/nomad/nomad.hcl
+scp deployments/infra/nomad/nomad.hcl user@node:/etc/nomad/nomad.hcl
 
 # Создать systemd-юнит /etc/systemd/system/nomad.service:
 # [Unit]
@@ -97,17 +97,17 @@ Nomad скачивает бинарники прямо из GitHub Releases че
 
 ```bash
 # Скопировать шаблон и заполнить значениями
-cp deployments/mode/prod/prod.vars.example deployments/mode/prod/prod.vars
+cp deployments/envs/prod/prod.vars.example deployments/envs/prod/prod.vars
 # ... указать github_repo, version, секреты ...
 
 # Задеплоить (Nomad сам скачает нужную версию)
 nomad job run \
-  -var-file=deployments/mode/prod/prod.vars \
-  deployments/services/nomad/platform.nomad
+  -var-file=deployments/envs/prod/prod.vars \
+  deployments/infra/nomad/platform.nomad
 
 nomad job run \
-  -var-file=deployments/mode/prod/prod.vars \
-  deployments/services/nomad/xservices.nomad
+  -var-file=deployments/envs/prod/prod.vars \
+  deployments/infra/nomad/xservices.nomad
 ```
 
 Nomad выполняет rolling update: перезапускает по одной аллокации, дожидается `GET /health → 200` перед следующей. Zero downtime.
