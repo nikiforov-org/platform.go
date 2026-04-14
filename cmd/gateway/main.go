@@ -7,39 +7,43 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/platform/logger"
+	"platform/internal/platform/nc"
 	"platform/internal/services/gateway"
 )
 
 func main() {
+	log := logger.New("gateway")
+
 	// 1. Конфигурация из переменных окружения.
 	cfg, err := gateway.LoadConfig()
 	if err != nil {
-		log.Fatalf("gateway: ошибка конфигурации: %v", err)
+		log.Fatal().Err(err).Msg("ошибка конфигурации")
 	}
 
 	if len(cfg.AllowedHosts) == 0 {
-		log.Println("gateway: WARN: ALLOWED_HOSTS не задан — проверка Origin отключена. Допустимо только в dev-окружении.")
+		log.Warn().Msg("ALLOWED_HOSTS не задан — проверка Origin отключена. Допустимо только в dev-окружении.")
 	}
 
 	// 2. NATS.
-	nc, err := natsclient.NewClient(cfg.NATS)
+	natsClient, err := nc.NewClient(cfg.NATS, log)
 	if err != nil {
-		log.Fatalf("gateway: ошибка подключения к NATS: %v", err)
+		log.Fatal().Err(err).Msg("ошибка подключения к NATS")
 	}
-	defer nc.Close()
 
-	// 3. Gateway.
-	gw := gateway.New(nc, cfg.AllowedHosts)
+	// 3. Канал завершения — сигнализирует фоновым горутинам (rate limiter cleanup).
+	stopCh := make(chan struct{})
 
-	// 4. HTTP-сервер.
+	// 4. Gateway.
+	gw := gateway.New(natsClient, cfg, log, stopCh)
+
+	// 5. HTTP-сервер.
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           gw.Handler(),
@@ -49,24 +53,30 @@ func main() {
 		IdleTimeout:       cfg.HTTP.IdleTimeout,
 	}
 
-	// 5. Graceful Shutdown.
+	// 6. Graceful Shutdown.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("gateway: запущен на %s", server.Addr)
+		log.Info().Str("addr", server.Addr).Msg("запущен")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("gateway: ошибка сервера: %v", err)
+			log.Fatal().Err(err).Msg("ошибка сервера")
 		}
 	}()
 
 	<-stop
-	log.Println("gateway: завершение работы...")
+	log.Info().Msg("завершение работы...")
+	close(stopCh) // останавливает фоновые горутины Gateway
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Останавливаем HTTP: новые запросы не принимаются.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("ошибка HTTP Shutdown")
+	}
 
-	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("gateway: ошибка при Shutdown: %v", err)
+	// Дренируем NATS: in-flight запросы завершаются, буфер сбрасывается.
+	if err := natsClient.Drain(5 * time.Second); err != nil {
+		log.Error().Err(err).Msg("NATS drain")
 	}
 }

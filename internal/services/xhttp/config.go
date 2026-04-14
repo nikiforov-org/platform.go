@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/platform/nc"
 	"platform/utils"
 )
 
@@ -21,7 +21,7 @@ import (
 //	DATABASE_URL   — DSN PostgreSQL      (обязательно)
 //	CACHE_TTL      — TTL кэша            ("30s")
 type Config struct {
-	NATS        natsclient.Config
+	NATS        nc.Config
 	DatabaseURL string
 	CacheTTL    time.Duration
 }
@@ -33,7 +33,7 @@ func LoadConfig() Config {
 		log.Fatal("xhttp: обязательная переменная DATABASE_URL не задана")
 	}
 
-	natsCfg := natsclient.DefaultConfig()
+	natsCfg := nc.DefaultConfig()
 	natsCfg.Server.Host = utils.GetEnv("NATS_HOST", natsCfg.Server.Host)
 	natsCfg.Server.ClientPort = utils.GetEnv("NATS_PORT", natsCfg.Server.ClientPort)
 	natsCfg.Auth.User = utils.GetEnv("NATS_USER", "")

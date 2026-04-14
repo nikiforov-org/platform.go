@@ -3,22 +3,24 @@ package xhttp
 
 import (
 	"context"
-	"log"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/platform/nc"
+
+	"github.com/rs/zerolog"
 )
 
 // cache — тонкая обёртка над NATS KV для работы с кэшем сервиса.
 // Все ошибки логируются и не прерывают основной поток: кэш деградирует
 // до сквозных запросов в PostgreSQL без потери функциональности.
 type cache struct {
-	nc     *natsclient.PlatformClient
+	nc     *nc.PlatformClient
 	bucket string
+	log    zerolog.Logger
 }
 
 // newCache создаёт экземпляр кэша для указанного KV-бакета.
-func newCache(nc *natsclient.PlatformClient, bucket string) *cache {
-	return &cache{nc: nc, bucket: bucket}
+func newCache(nc *nc.PlatformClient, bucket string, log zerolog.Logger) *cache {
+	return &cache{nc: nc, bucket: bucket, log: log}
 }
 
 // Get возвращает значение из KV-кэша по ключу.
@@ -26,7 +28,7 @@ func newCache(nc *natsclient.PlatformClient, bucket string) *cache {
 func (c *cache) Get(ctx context.Context, key string) []byte {
 	val, err := c.nc.GetValue(ctx, c.bucket, key)
 	if err != nil {
-		log.Printf("http-ms: cache.Get %q: %v", key, err)
+		c.log.Error().Err(err).Str("key", key).Msg("cache.Get")
 		return nil
 	}
 	return val
@@ -35,7 +37,7 @@ func (c *cache) Get(ctx context.Context, key string) []byte {
 // Put записывает значение в KV-кэш.
 func (c *cache) Put(ctx context.Context, key string, val []byte) {
 	if err := c.nc.PutValue(ctx, c.bucket, key, val); err != nil {
-		log.Printf("http-ms: cache.Put %q: %v", key, err)
+		c.log.Error().Err(err).Str("key", key).Msg("cache.Put")
 	}
 }
 
@@ -45,7 +47,7 @@ func (c *cache) Put(ctx context.Context, key string, val []byte) {
 func (c *cache) Invalidate(ctx context.Context, keys ...string) {
 	for _, key := range keys {
 		if err := c.nc.PutValue(ctx, c.bucket, key, []byte{}); err != nil {
-			log.Printf("http-ms: cache.Invalidate %q: %v", key, err)
+			c.log.Error().Err(err).Str("key", key).Msg("cache.Invalidate")
 		}
 	}
 }

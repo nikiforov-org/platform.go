@@ -3,11 +3,11 @@ package xws
 
 import (
 	"encoding/json"
-	"log"
 	"sync"
 	"time"
 
-	natsgo "github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go"
+	"github.com/rs/zerolog"
 )
 
 // Manager — реестр активных WS-сессий.
@@ -16,16 +16,18 @@ import (
 type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*session
-	nc       *natsgo.Conn
+	nc       *nats.Conn
 	timeout  time.Duration
+	log      zerolog.Logger
 }
 
 // NewManager создаёт экземпляр Manager с заданным таймаутом бездействия.
-func NewManager(nc *natsgo.Conn, timeout time.Duration) *Manager {
+func NewManager(nc *nats.Conn, timeout time.Duration, log zerolog.Logger) *Manager {
 	return &Manager{
 		sessions: make(map[string]*session),
 		nc:       nc,
 		timeout:  timeout,
+		log:      log,
 	}
 }
 
@@ -39,7 +41,7 @@ func (m *Manager) Open(sid string) {
 	defer m.mu.Unlock()
 
 	if _, exists := m.sessions[sid]; exists {
-		log.Printf("xws: [sid:%s] сессия уже существует, пропускаем", sid)
+		m.log.Warn().Str("sid", sid).Msg("сессия уже существует, пропускаем")
 		return
 	}
 
@@ -51,23 +53,24 @@ func (m *Manager) Open(sid string) {
 		outSubj: outSubj,
 		nc:      m.nc,
 		timeout: m.timeout,
+		log:     m.log,
 	}
 
 	// Таймер бездействия: по истечении публикуем CLOSE и удаляем сессию.
 	sess.timer = time.AfterFunc(m.timeout, func() {
-		log.Printf("xws: [sid:%s] таймаут бездействия (%s)", sid, m.timeout)
+		m.log.Info().Str("sid", sid).Dur("timeout", m.timeout).Msg("таймаут бездействия")
 		sess.close()
 		m.remove(sid)
 	})
 
 	// Каждая сессия — уникальная тема, Queue Group не нужна:
 	// конкретный SID должен обрабатываться одним инстансом, который его открыл.
-	sub, err := m.nc.Subscribe(inSubj, func(msg *natsgo.Msg) {
+	sub, err := m.nc.Subscribe(inSubj, func(msg *nats.Msg) {
 		m.handleIncoming(sess, msg)
 	})
 	if err != nil {
 		sess.timer.Stop()
-		log.Printf("xws: [sid:%s] ошибка Subscribe: %v", sid, err)
+		m.log.Error().Err(err).Str("sid", sid).Msg("ошибка Subscribe")
 		return
 	}
 	sess.inSub = sub
@@ -80,18 +83,18 @@ func (m *Manager) Open(sid string) {
 		Text: "Соединение будет закрыто после " + m.timeout.String() + " бездействия.",
 	})
 
-	log.Printf("xws: [sid:%s] сессия открыта (timeout: %s)", sid, m.timeout)
+	m.log.Info().Str("sid", sid).Dur("timeout", m.timeout).Msg("сессия открыта")
 }
 
 // handleIncoming обрабатывает входящее сообщение от браузера.
 // Любое сообщение сбрасывает таймер бездействия.
-func (m *Manager) handleIncoming(sess *session, msg *natsgo.Msg) {
+func (m *Manager) handleIncoming(sess *session, msg *nats.Msg) {
 	// Любое входящее сообщение — признак активности клиента.
 	sess.resetTimer()
 
 	var in InMsg
 	if err := json.Unmarshal(msg.Data, &in); err != nil {
-		log.Printf("xws: [sid:%s] невалидный JSON: %v", sess.sid, err)
+		m.log.Warn().Err(err).Str("sid", sess.sid).Msg("невалидный JSON")
 		return
 	}
 
@@ -106,13 +109,13 @@ func (m *Manager) handleIncoming(sess *session, msg *natsgo.Msg) {
 
 	case "disconnect":
 		// Клиент явно запросил закрытие — не ждём таймаута.
-		log.Printf("xws: [sid:%s] клиент запросил disconnect", sess.sid)
+		m.log.Info().Str("sid", sess.sid).Msg("клиент запросил disconnect")
 		sess.timer.Stop()
 		sess.close()
 		m.remove(sess.sid)
 
 	default:
-		log.Printf("xws: [sid:%s] неизвестный тип: %q", sess.sid, in.Type)
+		m.log.Warn().Str("sid", sess.sid).Str("type", in.Type).Msg("неизвестный тип сообщения")
 	}
 }
 
@@ -135,5 +138,5 @@ func (m *Manager) CloseAll() {
 		sess.close()
 		delete(m.sessions, sid)
 	}
-	log.Println("xws: все сессии закрыты")
+	m.log.Info().Msg("все сессии закрыты")
 }

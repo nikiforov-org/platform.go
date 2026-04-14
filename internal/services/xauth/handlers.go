@@ -6,24 +6,26 @@ import (
 	"crypto/hmac"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/platform/nc"
 	"platform/utils"
+
+	"github.com/rs/zerolog"
 
 	"github.com/nats-io/nats.go"
 )
 
 // Handlers — набор NATS-обработчиков сервиса xauth.
 type Handlers struct {
-	nc  *natsclient.PlatformClient
+	nc  *nc.PlatformClient
 	cfg Config
+	log zerolog.Logger
 }
 
 // NewHandlers создаёт экземпляр Handlers.
-func NewHandlers(nc *natsclient.PlatformClient, cfg Config) *Handlers {
-	return &Handlers{nc: nc, cfg: cfg}
+func NewHandlers(nc *nc.PlatformClient, cfg Config, log zerolog.Logger) *Handlers {
+	return &Handlers{nc: nc, cfg: cfg, log: log}
 }
 
 // HandleLogin проверяет логин/пароль и выдаёт пару JWT-токенов в HttpOnly-куках.
@@ -53,12 +55,12 @@ func (h *Handlers) HandleLogin(msg *nats.Msg) {
 
 	accessCookie, refreshCookie, err := h.issueTokenCookies(ctx)
 	if err != nil {
-		log.Printf("xauth: HandleLogin: %v", err)
+		h.log.Error().Err(err).Msg("HandleLogin: ошибка выдачи токенов")
 		utils.ReplyError(msg, 500, "failed to issue tokens")
 		return
 	}
 
-	log.Printf("xauth: login ok, user=%s", h.cfg.Username)
+	h.log.Info().Str("user", h.cfg.Username).Msg("login ok")
 	utils.Reply(msg, 200,
 		map[string]string{"status": "ok"},
 		"Set-Cookie", accessCookie,
@@ -105,12 +107,12 @@ func (h *Handlers) HandleRefresh(msg *nats.Msg) {
 
 	accessCookie, refreshCookie, err := h.issueTokenCookies(ctx)
 	if err != nil {
-		log.Printf("xauth: HandleRefresh: %v", err)
+		h.log.Error().Err(err).Msg("HandleRefresh: ошибка выдачи токенов")
 		utils.ReplyError(msg, 500, "failed to issue tokens")
 		return
 	}
 
-	log.Printf("xauth: refresh ok, user=%s", c.Sub)
+	h.log.Info().Str("user", c.Sub).Msg("refresh ok")
 	utils.Reply(msg, 200,
 		map[string]string{"status": "ok"},
 		"Set-Cookie", accessCookie,
@@ -134,7 +136,7 @@ func (h *Handlers) HandleLogout(msg *nats.Msg) {
 	clearAccess := utils.BuildSetCookie("access_token", "", h.cfg.CookieDomain, -1, h.cfg.CookieSecure)
 	clearRefresh := utils.BuildSetCookie("refresh_token", "", h.cfg.CookieDomain, -1, h.cfg.CookieSecure)
 
-	log.Println("xauth: logout")
+	h.log.Info().Msg("logout")
 	utils.Reply(msg, 200,
 		map[string]string{"status": "ok"},
 		"Set-Cookie", clearAccess,

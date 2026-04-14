@@ -13,26 +13,27 @@ package main
 
 import (
 	"database/sql"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"platform/internal/middleware"
-	"platform/internal/platform/natsclient"
+	"platform/internal/platform/logger"
+	"platform/internal/platform/nc"
 	"platform/internal/services/xhttp"
 
 	"github.com/nats-io/nats.go"
 )
 
 func main() {
+	log := logger.New("xhttp")
 	cfg := xhttp.LoadConfig()
 
 	// 1. PostgreSQL.
 	db, err := sql.Open("postgres", cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("xhttp: sql.Open: %v", err)
+		log.Fatal().Err(err).Msg("sql.Open")
 	}
 	defer db.Close()
 
@@ -41,28 +42,28 @@ func main() {
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
-		log.Fatalf("xhttp: db.Ping: %v", err)
+		log.Fatal().Err(err).Msg("db.Ping")
 	}
-	log.Println("xhttp: PostgreSQL подключена")
+	log.Info().Msg("PostgreSQL подключена")
 
 	if err := xhttp.Migrate(db); err != nil {
-		log.Fatalf("xhttp: migrate: %v", err)
+		log.Fatal().Err(err).Msg("migrate")
 	}
-	log.Println("xhttp: миграция выполнена")
+	log.Info().Msg("миграция выполнена")
 
 	// 2. NATS.
-	nc, err := natsclient.NewClient(cfg.NATS)
+	natsClient, err := nc.NewClient(cfg.NATS, log)
 	if err != nil {
-		log.Fatalf("xhttp: NATS: %v", err)
+		log.Fatal().Err(err).Msg("NATS")
 	}
-	defer nc.Close()
 
-	h := xhttp.NewHandlers(nc, db, cfg)
+	h := xhttp.NewHandlers(natsClient, db, cfg, log)
 
 	// 3. Конфигурация middleware для проверки JWT.
 	// ACCESS_SECRET должен совпадать с AUTH_ACCESS_SECRET сервиса auth-ms.
 	authCfg := middleware.AuthConfig{
 		AccessSecret: []byte(os.Getenv("ACCESS_SECRET")),
+		Log:          log,
 	}
 
 	// 4. Регистрация подписок.
@@ -73,18 +74,18 @@ func main() {
 		subject string
 		handler nats.MsgHandler
 	}{
-		{"api.v1.xhttp.create", middleware.RequireAuth(authCfg, h.HandleCreate)},
-		{"api.v1.xhttp.get", h.HandleGet},   // публичный эндпоинт
-		{"api.v1.xhttp.list", h.HandleList}, // публичный эндпоинт
-		{"api.v1.xhttp.update", middleware.RequireAuth(authCfg, h.HandleUpdate)},
-		{"api.v1.xhttp.delete", middleware.RequireAuth(authCfg, h.HandleDelete)},
+		{"api.v1.xhttp.create", middleware.Recover(log, middleware.RequireAuth(authCfg, h.HandleCreate))},
+		{"api.v1.xhttp.get", middleware.Recover(log, h.HandleGet)},   // публичный эндпоинт
+		{"api.v1.xhttp.list", middleware.Recover(log, h.HandleList)}, // публичный эндпоинт
+		{"api.v1.xhttp.update", middleware.Recover(log, middleware.RequireAuth(authCfg, h.HandleUpdate))},
+		{"api.v1.xhttp.delete", middleware.Recover(log, middleware.RequireAuth(authCfg, h.HandleDelete))},
 	}
 
 	for _, s := range subs {
-		if _, err := nc.Conn.QueueSubscribe(s.subject, queue, s.handler); err != nil {
-			log.Fatalf("xhttp: QueueSubscribe %s: %v", s.subject, err)
+		if _, err := natsClient.Conn.QueueSubscribe(s.subject, queue, s.handler); err != nil {
+			log.Fatal().Err(err).Str("subject", s.subject).Msg("QueueSubscribe")
 		}
-		log.Printf("xhttp: подписан на %s [queue: %s]", s.subject, queue)
+		log.Info().Str("subject", s.subject).Str("queue", queue).Msg("подписан")
 	}
 
 	// 5. Ожидание сигнала завершения.
@@ -92,5 +93,12 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 
-	log.Println("xhttp: завершение работы...")
+	log.Info().Msg("завершение работы...")
+
+	// Сначала дренируем NATS: in-flight обработчики завершают работу,
+	// новые сообщения не принимаются — новые DB-запросы не стартуют.
+	if err := natsClient.Drain(5 * time.Second); err != nil {
+		log.Error().Err(err).Msg("NATS drain")
+	}
+	// db.Close() вызывается через defer выше, после возврата из main.
 }

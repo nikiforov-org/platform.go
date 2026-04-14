@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/platform/nc"
 	"platform/utils"
 )
 
@@ -27,7 +27,7 @@ import (
 //	COOKIE_DOMAIN        — домен кук                         ("")
 //	COOKIE_SECURE        — флаг Secure на куках              ("true")
 type Config struct {
-	NATS          natsclient.Config
+	NATS          nc.Config
 	Username      string
 	Password      string
 	AccessSecret  []byte
@@ -49,7 +49,7 @@ func LoadConfig() Config {
 		return v
 	}
 
-	natsCfg := natsclient.DefaultConfig()
+	natsCfg := nc.DefaultConfig()
 	natsCfg.Server.Host = utils.GetEnv("NATS_HOST", natsCfg.Server.Host)
 	natsCfg.Server.ClientPort = utils.GetEnv("NATS_PORT", natsCfg.Server.ClientPort)
 	natsCfg.Auth.User = utils.GetEnv("NATS_USER", "")

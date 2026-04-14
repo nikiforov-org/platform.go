@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"time"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/platform/nc"
 	"platform/utils"
+
+	"github.com/rs/zerolog"
 
 	"github.com/nats-io/nats.go"
 )
@@ -26,17 +28,19 @@ type Item struct {
 // Handlers — набор NATS-обработчиков сервиса.
 // Хранит все зависимости, необходимые для выполнения запросов.
 type Handlers struct {
-	nc    *natsclient.PlatformClient
+	nc    *nc.PlatformClient
 	db    *sql.DB
 	cache *cache
+	log   zerolog.Logger
 }
 
 // NewHandlers создаёт экземпляр Handlers с переданными зависимостями.
-func NewHandlers(nc *natsclient.PlatformClient, db *sql.DB, cfg Config) *Handlers {
+func NewHandlers(nc *nc.PlatformClient, db *sql.DB, cfg Config, log zerolog.Logger) *Handlers {
 	return &Handlers{
 		nc:    nc,
 		db:    db,
-		cache: newCache(nc, cfg.NATS.KV.BucketName),
+		cache: newCache(nc, cfg.NATS.KV.BucketName, log),
+		log:   log,
 	}
 }
 

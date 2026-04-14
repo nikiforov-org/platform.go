@@ -1,6 +1,6 @@
 // internal/middleware/xauth.go
 //
-// Пакет middleware содержит обёртки над natsgo.MsgHandler для сквозной логики.
+// Пакет middleware содержит обёртки над nats.MsgHandler для сквозной логики.
 //
 // В отличие от HTTP-middleware, NATS-middleware — это функция высшего порядка:
 // принимает следующий обработчик и возвращает новый с расширенным поведением.
@@ -22,12 +22,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	natsgo "github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go"
+	"github.com/rs/zerolog"
 )
 
 // AuthConfig — параметры проверки JWT для middleware.
@@ -36,6 +36,9 @@ type AuthConfig struct {
 	// AccessSecret — HMAC-секрет для проверки подписи access-токена.
 	// Должен совпадать с AUTH_ACCESS_SECRET сервиса auth-ms.
 	AccessSecret []byte
+
+	// Log — логгер для событий авторизации.
+	Log zerolog.Logger
 }
 
 // Claims — полезная нагрузка JWT access-токена.
@@ -57,8 +60,8 @@ type Claims struct {
 // Middleware не делает сетевых запросов — проверка полностью локальная (HMAC + Exp).
 // Access-токен живёт недолго (обычно 15 минут), поэтому отзыв через KV не нужен.
 // Для принудительного отзыва используйте короткий AUTH_ACCESS_TTL.
-func RequireAuth(cfg AuthConfig, next natsgo.MsgHandler) natsgo.MsgHandler {
-	return func(msg *natsgo.Msg) {
+func RequireAuth(cfg AuthConfig, next nats.MsgHandler) nats.MsgHandler {
+	return func(msg *nats.Msg) {
 		token := cookieFromMsg(msg, "access_token")
 		if token == "" {
 			replyUnauthorized(msg, "access token missing")
@@ -67,7 +70,7 @@ func RequireAuth(cfg AuthConfig, next natsgo.MsgHandler) natsgo.MsgHandler {
 
 		c, err := verifyJWT(token, cfg.AccessSecret)
 		if err != nil {
-			log.Printf("middleware.RequireAuth: %v", err)
+			cfg.Log.Warn().Err(err).Str("subject", msg.Subject).Msg("RequireAuth: невалидный токен")
 			replyUnauthorized(msg, "invalid access token")
 			return
 		}
@@ -90,21 +93,23 @@ func RequireAuth(cfg AuthConfig, next natsgo.MsgHandler) natsgo.MsgHandler {
 // =============================================================================
 
 // replyUnauthorized отвечает 401 через reply-subject сообщения.
-// Использует msg.RespondMsg — не требует доступа к *natsgo.Conn.
-func replyUnauthorized(msg *natsgo.Msg, text string) {
-	out := natsgo.NewMsg(msg.Reply)
+// Использует msg.RespondMsg — не требует доступа к *nats.Conn.
+func replyUnauthorized(msg *nats.Msg, text string) {
+	out := nats.NewMsg(msg.Reply)
 	out.Header.Set("Content-Type", "application/json")
 	out.Header.Set("Status", "401")
 	out.Data = []byte(`{"error":"` + text + `"}`)
 
 	if err := msg.RespondMsg(out); err != nil {
-		log.Printf("middleware: replyUnauthorized: %v", err)
+		// Логировать некуда — функция не имеет доступа к логгеру.
+		// Ошибка здесь означает потерю reply-subject, что крайне редко.
+		_ = err
 	}
 }
 
 // cookieFromMsg извлекает значение куки из заголовка "Cookie" NATS-сообщения.
 // Переиспользует стандартный парсер http.Request — без самописного парсинга.
-func cookieFromMsg(msg *natsgo.Msg, name string) string {
+func cookieFromMsg(msg *nats.Msg, name string) string {
 	raw := msg.Header.Get("Cookie")
 	if raw == "" {
 		return ""

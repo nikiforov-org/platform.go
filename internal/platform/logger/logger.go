@@ -1,0 +1,38 @@
+// internal/platform/logger/logger.go
+//
+// logger — инициализация структурированного логгера для микросервисов платформы.
+// Каждый сервис создаёт свой экземпляр через New, получая logger с полем "service".
+//
+// Уровень логирования задаётся через переменную окружения LOG_LEVEL:
+//
+//	LOG_LEVEL=debug   — все сообщения, включая отладочные
+//	LOG_LEVEL=info    — информационные, предупреждения, ошибки (по умолчанию)
+//	LOG_LEVEL=warn    — только предупреждения и ошибки
+//	LOG_LEVEL=error   — только ошибки
+package logger
+
+import (
+	"os"
+	"strings"
+
+	"github.com/rs/zerolog"
+)
+
+// New создаёт zerolog.Logger для указанного сервиса.
+// Все сообщения пишутся в stderr в формате JSON.
+// Каждое сообщение содержит поля: time, level, service, message.
+func New(service string) zerolog.Logger {
+	level := zerolog.InfoLevel
+	if raw := strings.ToLower(os.Getenv("LOG_LEVEL")); raw != "" {
+		if lvl, err := zerolog.ParseLevel(raw); err == nil {
+			level = lvl
+		}
+	}
+	zerolog.SetGlobalLevel(level)
+
+	return zerolog.New(os.Stderr).
+		With().
+		Timestamp().
+		Str("service", service).
+		Logger()
+}

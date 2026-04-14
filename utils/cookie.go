@@ -4,7 +4,7 @@ package utils
 import (
 	"net/http"
 
-	natsgo "github.com/nats-io/nats.go"
+	nats "github.com/nats-io/nats.go"
 )
 
 // GetCookie извлекает значение куки из заголовка "Cookie" NATS-сообщения.
@@ -13,7 +13,7 @@ import (
 // поэтому для парсинга переиспользуется стандартный http.Request.Cookie —
 // без самописного парсера, который неизбежно сломается на edge-cases
 // (кавычки, пробелы, спецсимволы).
-func GetCookie(msg *natsgo.Msg, name string) string {
+func GetCookie(msg *nats.Msg, name string) string {
 	raw := msg.Header.Get("Cookie")
 	if raw == "" {
 		return ""

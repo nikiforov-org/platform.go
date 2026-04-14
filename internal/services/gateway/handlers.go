@@ -6,17 +6,17 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/platform/nc"
 	"platform/utils"
 
 	"github.com/gorilla/websocket"
 	"github.com/nats-io/nats.go"
+	"github.com/rs/zerolog"
 )
 
 // =============================================================================
@@ -41,32 +41,68 @@ const wsPingInterval = 30 * time.Second
 
 // Gateway — HTTP/WebSocket-шлюз, транслирующий запросы в NATS Request-Reply.
 type Gateway struct {
-	nats         *natsclient.PlatformClient
+	nats         *nc.PlatformClient
 	upgrader     websocket.Upgrader
 	allowedHosts utils.AllowedHostSet
+	cfg          Config
+	rl           *rl
+	log          zerolog.Logger
 }
 
 // New создаёт Gateway с переданными зависимостями.
+// stop закрывается при штатном завершении — освобождает фоновую горутину rate limiter.
 // CheckOrigin делегируется allowedHosts — HTTP и WebSocket используют одно правило.
-func New(nc *natsclient.PlatformClient, allowedHosts utils.AllowedHostSet) *Gateway {
+func New(natsClient *nc.PlatformClient, cfg Config, log zerolog.Logger, stop <-chan struct{}) *Gateway {
 	gw := &Gateway{
-		nats:         nc,
-		allowedHosts: allowedHosts,
+		nats:         natsClient,
+		allowedHosts: cfg.AllowedHosts,
+		cfg:          cfg,
+		rl:           newRateLimiter(cfg.RateLimit, log, stop),
+		log:          log,
 	}
 	gw.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return allowedHosts.Allows(r.Header.Get("Origin"))
+			return cfg.AllowedHosts.Allows(r.Header.Get("Origin"))
 		},
 	}
 	return gw
 }
 
 // Handler возвращает корневой http.Handler шлюза.
-// Применяет middleware Origin поверх маршрутизатора /v1/.
+//
+// Маршруты:
+//   - /health — health check (вне rate limit и Origin, не проксируется в NATS)
+//   - /v1/     — API: Origin → RateLimit → маршрутизация (HTTP RPC или WebSocket)
 func (gw *Gateway) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/", gw.route)
-	return gw.middlewareOrigin(mux)
+	api := http.NewServeMux()
+	api.HandleFunc("/v1/", gw.route)
+
+	root := http.NewServeMux()
+	root.HandleFunc("/health", gw.handleHealth)
+	root.Handle("/", gw.middlewareOrigin(gw.middlewareRateLimit(api)))
+	return root
+}
+
+// handleHealth отвечает на запросы проверки здоровья сервиса.
+//
+// Проверяет доступность NATS-соединения. Используется оркестратором (Nomad)
+// для определения готовности Gateway к обработке трафика.
+//
+// Ответы:
+//
+//	200 {"status":"ok",  "nats":"connected"}    — Gateway готов
+//	503 {"status":"error","nats":"disconnected"} — NATS недоступен
+func (gw *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if gw.nats.Conn.IsConnected() {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok","nats":"connected"}`))
+		return
+	}
+
+	w.WriteHeader(http.StatusServiceUnavailable)
+	w.Write([]byte(`{"status":"error","nats":"disconnected"}`))
 }
 
 // =============================================================================
@@ -85,7 +121,7 @@ func (gw *Gateway) middlewareOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin != "" && !gw.allowedHosts.Allows(origin) {
-			log.Printf("gateway: отклонён Origin %q [%s %s]", origin, r.Method, r.URL.Path)
+			gw.log.Warn().Str("origin", origin).Str("method", r.Method).Str("path", r.URL.Path).Msg("отклонён Origin")
 			http.Error(w, "origin not allowed", http.StatusForbidden)
 			return
 		}
@@ -143,7 +179,7 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
 	defer r.Body.Close()
 	if err != nil {
-		log.Printf("gateway: ошибка чтения тела [%s]: %v", subject, err)
+		gw.log.Error().Err(err).Str("subject", subject).Msg("ошибка чтения тела запроса")
 		http.Error(w, "failed to read request body", http.StatusBadRequest)
 		return
 	}
@@ -161,7 +197,7 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 
 	resp, err := gw.nats.Conn.RequestMsg(msg, 5*time.Second)
 	if err != nil {
-		log.Printf("gateway: NATS request error [%s]: %v", subject, err)
+		gw.log.Error().Err(err).Str("subject", subject).Msg("NATS request error")
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -190,7 +226,7 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 	w.WriteHeader(statusCode)
 
 	if _, err := w.Write(resp.Data); err != nil {
-		log.Printf("gateway: ошибка записи ответа [%s]: %v", subject, err)
+		gw.log.Error().Err(err).Str("subject", subject).Msg("ошибка записи ответа")
 	}
 }
 
@@ -216,18 +252,28 @@ func parseStatus(s string) int {
 //   - Микросервис → Браузер: сообщения из {base}.out.{sid} пишутся в WS
 //   - Закрытие сессии:       микросервис шлёт Header "Control: CLOSE"
 func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service string) {
+	// Проверяем глобальный лимит WS-соединений до апгрейда.
+	ok, releaseConn := gw.wsConnGuard()
+	if !ok {
+		gw.log.Warn().Str("service", service).Int64("limit", gw.cfg.RateLimit.MaxWSConns).Msg("WS connections limit reached")
+		http.Error(w, `{"error":"too many connections"}`, http.StatusServiceUnavailable)
+		return
+	}
+
 	conn, err := gw.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		// upgrader сам пишет HTTP-ошибку; логируем только для диагностики.
-		log.Printf("gateway: WS upgrade error [%s]: %v", service, err)
+		releaseConn()
+		gw.log.Error().Err(err).Str("service", service).Msg("WS upgrade error")
 		return
 	}
+	defer releaseConn()
 	defer conn.Close()
 
 	// Генерируем уникальный ID сессии (8 байт = 16 hex-символов).
 	sidRaw := make([]byte, 8)
 	if _, err := rand.Read(sidRaw); err != nil {
-		log.Printf("gateway: ошибка генерации session ID: %v", err)
+		gw.log.Error().Err(err).Msg("ошибка генерации session ID")
 		return
 	}
 	sessionID := fmt.Sprintf("%x", sidRaw)
@@ -262,7 +308,7 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 		connectMsg.Header.Set("Cookie", cookie)
 	}
 	if err := gw.nats.Conn.PublishMsg(connectMsg); err != nil {
-		log.Printf("gateway: WS connect publish error [sid:%s]: %v", sessionID, err)
+		gw.log.Error().Err(err).Str("sid", sessionID).Msg("WS connect publish error")
 		return
 	}
 
@@ -273,12 +319,12 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 			return
 		}
 		if err := safeWrite(websocket.TextMessage, m.Data); err != nil {
-			log.Printf("gateway: WS write error [sid:%s]: %v", sessionID, err)
+			gw.log.Error().Err(err).Str("sid", sessionID).Msg("WS write error")
 			cancel()
 		}
 	})
 	if err != nil {
-		log.Printf("gateway: WS subscribe error [%s, sid:%s]: %v", service, sessionID, err)
+		gw.log.Error().Err(err).Str("service", service).Str("sid", sessionID).Msg("WS subscribe error")
 		return
 	}
 	defer sub.Unsubscribe()
@@ -291,7 +337,7 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 			select {
 			case <-ticker.C:
 				if err := safeWrite(websocket.PingMessage, nil); err != nil {
-					log.Printf("gateway: WS ping error [sid:%s]: %v", sessionID, err)
+					gw.log.Error().Err(err).Str("sid", sessionID).Msg("WS ping error")
 					cancel()
 					return
 				}
@@ -301,8 +347,8 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 		}
 	}()
 
-	log.Printf("gateway: WS connected service=%s sid=%s remote=%s", service, sessionID, r.RemoteAddr)
-	defer log.Printf("gateway: WS disconnected service=%s sid=%s", service, sessionID)
+	gw.log.Info().Str("service", service).Str("sid", sessionID).Str("remote", r.RemoteAddr).Msg("WS connected")
+	defer gw.log.Info().Str("service", service).Str("sid", sessionID).Msg("WS disconnected")
 
 	// Основной цикл чтения: Браузер → Микросервис.
 	for {
@@ -317,13 +363,13 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Printf("gateway: WS read error [sid:%s]: %v", sessionID, err)
+				gw.log.Error().Err(err).Str("sid", sessionID).Msg("WS read error")
 			}
 			return
 		}
 
 		if err := gw.nats.Conn.Publish(fmt.Sprintf("%s.in.%s", baseSubject, sessionID), data); err != nil {
-			log.Printf("gateway: NATS publish error [sid:%s]: %v", sessionID, err)
+			gw.log.Error().Err(err).Str("sid", sessionID).Msg("NATS publish error")
 		}
 	}
 }

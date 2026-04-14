@@ -4,7 +4,7 @@ package xws
 import (
 	"time"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/platform/nc"
 	"platform/utils"
 )
 
@@ -18,13 +18,13 @@ import (
 //	NATS_PASSWORD        — пароль авторизации      ("")
 //	INACTIVITY_TIMEOUT   — таймаут бездействия    ("3m")
 type Config struct {
-	NATS              natsclient.Config
+	NATS              nc.Config
 	InactivityTimeout time.Duration
 }
 
 // LoadConfig читает конфигурацию из переменных окружения.
 func LoadConfig() Config {
-	natsCfg := natsclient.DefaultConfig()
+	natsCfg := nc.DefaultConfig()
 	natsCfg.Server.Host = utils.GetEnv("NATS_HOST", natsCfg.Server.Host)
 	natsCfg.Server.ClientPort = utils.GetEnv("NATS_PORT", natsCfg.Server.ClientPort)
 	natsCfg.Auth.User = utils.GetEnv("NATS_USER", "")

@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/platform/nc"
 	"platform/utils"
 )
 
@@ -18,11 +18,35 @@ type Config struct {
 	HTTP HTTPConfig
 
 	// NATS — параметры подключения к шине.
-	NATS natsclient.Config
+	NATS nc.Config
 
 	// AllowedHosts — множество разрешённых Origin-хостов.
 	// Пустое множество отключает проверку (dev-режим).
 	AllowedHosts utils.AllowedHostSet
+
+	// RateLimit — ограничения входящего трафика.
+	RateLimit RateLimitConfig
+}
+
+// RateLimitConfig — параметры rate limiting для входящего трафика.
+type RateLimitConfig struct {
+	// Rate — максимальная скорость запросов в секунду с одного IP (общий лимит).
+	Rate float64
+
+	// Burst — пиковый размер очереди (общий лимит). Клиент может послать Burst
+	// запросов мгновенно, после чего ограничен скоростью Rate req/s.
+	Burst int
+
+	// AuthRate — максимальная скорость запросов в секунду с одного IP
+	// для маршрутов /v1/xauth/*. Защищает от брутфорса.
+	AuthRate float64
+
+	// AuthBurst — пиковый размер очереди для auth-маршрутов.
+	AuthBurst int
+
+	// MaxWSConns — максимальное число одновременных WebSocket-соединений.
+	// При превышении Gateway возвращает 503.
+	MaxWSConns int64
 }
 
 // HTTPConfig — параметры HTTP-сервера шлюза.
@@ -64,6 +88,12 @@ type HTTPConfig struct {
 //	ALLOWED_HOSTS              — разрешённые Origin-хосты через ","      ("")
 //
 // Таймауты передаются в формате time.Duration: "5s", "1m30s" и т.д.
+//
+//	GATEWAY_RATE_LIMIT         — req/s с одного IP (общий)               (100)
+//	GATEWAY_RATE_BURST         — burst (общий)                            (200)
+//	GATEWAY_AUTH_RATE_LIMIT    — req/s с одного IP на /v1/xauth/*        (5)
+//	GATEWAY_AUTH_RATE_BURST    — burst (auth)                             (10)
+//	GATEWAY_MAX_WS_CONNS       — макс. одновременных WS-соединений        (1000)
 func LoadConfig() (Config, error) {
 	// ALLOWED_HOSTS читается через os.Getenv, а не utils.GetEnv: значение содержит
 	// запятые — fmt.Sscan остановился бы на первом разделителе.
@@ -73,7 +103,7 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("ALLOWED_HOSTS: %w", err)
 	}
 
-	natsCfg := natsclient.DefaultConfig()
+	natsCfg := nc.DefaultConfig()
 	natsCfg.Server.Host = utils.GetEnv("NATS_HOST", natsCfg.Server.Host)
 	natsCfg.Server.ClientPort = utils.GetEnv("NATS_PORT", natsCfg.Server.ClientPort)
 	natsCfg.Auth.User = utils.GetEnv("NATS_USER", "")
@@ -91,5 +121,12 @@ func LoadConfig() (Config, error) {
 		},
 		NATS:         natsCfg,
 		AllowedHosts: allowedHosts,
+		RateLimit: RateLimitConfig{
+			Rate:       utils.GetEnv("GATEWAY_RATE_LIMIT", 100.0),
+			Burst:      utils.GetEnv("GATEWAY_RATE_BURST", 200),
+			AuthRate:   utils.GetEnv("GATEWAY_AUTH_RATE_LIMIT", 5.0),
+			AuthBurst:  utils.GetEnv("GATEWAY_AUTH_RATE_BURST", 10),
+			MaxWSConns: utils.GetEnv("GATEWAY_MAX_WS_CONNS", int64(1000)),
+		},
 	}, nil
 }

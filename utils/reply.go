@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	natsgo "github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go"
 )
 
 // NATSResponse — унифицированный конверт ответа любого микросервиса.
@@ -25,22 +25,22 @@ type NATSResponse struct {
 // Используется для передачи Set-Cookie из auth-ms через gateway в браузер:
 //
 //	utils.Reply(msg, 200, data, "Set-Cookie", accessCookie, "Set-Cookie", refreshCookie)
-func Reply(msg *natsgo.Msg, status int, data any, extraHeaders ...string) {
+func Reply(msg *nats.Msg, status int, data any, extraHeaders ...string) {
 	body, _ := json.Marshal(NATSResponse{Data: data})
 	natsRespond(msg, status, body, extraHeaders...)
 }
 
 // ReplyError публикует ответ с кодом ошибки и текстом в поле "error".
-func ReplyError(msg *natsgo.Msg, status int, errText string) {
+func ReplyError(msg *nats.Msg, status int, errText string) {
 	log.Printf("utils: [%s] %d %s", msg.Subject, status, errText)
 	body, _ := json.Marshal(NATSResponse{Error: errText})
 	natsRespond(msg, status, body)
 }
 
 // natsRespond — низкоуровневая публикация ответа через reply-subject.
-// Использует msg.RespondMsg — не требует доступа к *natsgo.Conn.
-func natsRespond(msg *natsgo.Msg, status int, body []byte, extraHeaders ...string) {
-	out := natsgo.NewMsg(msg.Reply)
+// Использует msg.RespondMsg — не требует доступа к *nats.Conn.
+func natsRespond(msg *nats.Msg, status int, body []byte, extraHeaders ...string) {
+	out := nats.NewMsg(msg.Reply)
 	out.Header.Set("Content-Type", "application/json")
 	out.Header.Set("Status", fmt.Sprintf("%d", status))
 

@@ -17,27 +17,29 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/middleware"
+	"platform/internal/platform/logger"
+	"platform/internal/platform/nc"
 	"platform/internal/services/xws"
 
 	"github.com/nats-io/nats.go"
 )
 
 func main() {
+	log := logger.New("xws")
 	cfg := xws.LoadConfig()
 
-	nc, err := natsclient.NewClient(cfg.NATS)
+	natsClient, err := nc.NewClient(cfg.NATS, log)
 	if err != nil {
-		log.Fatalf("xws: NATS: %v", err)
+		log.Fatal().Err(err).Msg("NATS")
 	}
-	defer nc.Close()
 
-	mgr := xws.NewManager(nc.Conn, cfg.InactivityTimeout)
+	mgr := xws.NewManager(natsClient.Conn, cfg.InactivityTimeout, log)
 
 	// Управляющая подписка: gateway сигнализирует о новой WS-сессии.
 	// Queue Group гарантирует, что одну сессию возьмёт ровно один инстанс.
@@ -46,7 +48,7 @@ func main() {
 		queue          = "xws"
 	)
 
-	_, err = nc.Conn.QueueSubscribe(connectSubject, queue, func(msg *nats.Msg) {
+	_, err = natsClient.Conn.QueueSubscribe(connectSubject, queue, middleware.Recover(log, func(msg *nats.Msg) {
 		sid := msg.Header.Get("Sid")
 		if sid == "" {
 			// Fallback для совместимости: SID может прийти в теле сообщения.
@@ -54,25 +56,29 @@ func main() {
 				SID string `json:"sid"`
 			}
 			if jsonErr := json.Unmarshal(msg.Data, &req); jsonErr != nil || req.SID == "" {
-				log.Printf("xws: невалидный connect payload")
+				log.Warn().Msg("невалидный connect payload")
 				return
 			}
 			sid = req.SID
 		}
 		mgr.Open(sid)
-	})
+	}))
 	if err != nil {
-		log.Fatalf("xws: QueueSubscribe %s: %v", connectSubject, err)
+		log.Fatal().Err(err).Str("subject", connectSubject).Msg("QueueSubscribe")
 	}
 
-	log.Printf("xws: ожидание сессий на %s [queue: %s]", connectSubject, queue)
-	log.Printf("xws: таймаут бездействия: %s", cfg.InactivityTimeout)
+	log.Info().Str("subject", connectSubject).Str("queue", queue).Dur("inactivity_timeout", cfg.InactivityTimeout).Msg("запущен")
 
 	// Ожидание сигнала завершения.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 
-	log.Println("xws: завершение работы...")
+	log.Info().Msg("завершение работы...")
+	// Закрываем активные WS-сессии до дрейна: NATS-подписки сессий отписываются,
+	// клиентам отправляется Control: CLOSE.
 	mgr.CloseAll()
+	if err := natsClient.Drain(5 * time.Second); err != nil {
+		log.Error().Err(err).Msg("NATS drain")
+	}
 }

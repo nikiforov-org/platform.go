@@ -11,27 +11,29 @@
 package main
 
 import (
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"platform/internal/platform/natsclient"
+	"platform/internal/middleware"
+	"platform/internal/platform/logger"
+	"platform/internal/platform/nc"
 	"platform/internal/services/xauth"
 
 	"github.com/nats-io/nats.go"
 )
 
 func main() {
+	log := logger.New("xauth")
 	cfg := xauth.LoadConfig()
 
-	nc, err := natsclient.NewClient(cfg.NATS)
+	natsClient, err := nc.NewClient(cfg.NATS, log)
 	if err != nil {
-		log.Fatalf("xauth: NATS: %v", err)
+		log.Fatal().Err(err).Msg("NATS")
 	}
-	defer nc.Close()
 
-	h := xauth.NewHandlers(nc, cfg)
+	h := xauth.NewHandlers(natsClient, cfg, log)
 
 	// Все эндпоинты xauth публичны по определению —
 	// именно этот сервис выдаёт токены, а не проверяет их.
@@ -41,24 +43,27 @@ func main() {
 		subject string
 		handler nats.MsgHandler
 	}{
-		{"api.v1.xauth.login", h.HandleLogin},
-		{"api.v1.xauth.refresh", h.HandleRefresh},
-		{"api.v1.xauth.logout", h.HandleLogout},
-		{"api.v1.xauth.me", h.HandleMe},
+		{"api.v1.xauth.login", middleware.Recover(log, h.HandleLogin)},
+		{"api.v1.xauth.refresh", middleware.Recover(log, h.HandleRefresh)},
+		{"api.v1.xauth.logout", middleware.Recover(log, h.HandleLogout)},
+		{"api.v1.xauth.me", middleware.Recover(log, h.HandleMe)},
 	}
 
 	for _, s := range subs {
-		if _, err := nc.Conn.QueueSubscribe(s.subject, queue, s.handler); err != nil {
-			log.Fatalf("xauth: QueueSubscribe %s: %v", s.subject, err)
+		if _, err := natsClient.Conn.QueueSubscribe(s.subject, queue, s.handler); err != nil {
+			log.Fatal().Err(err).Str("subject", s.subject).Msg("QueueSubscribe")
 		}
-		log.Printf("xauth: подписан на %s [queue: %s]", s.subject, queue)
+		log.Info().Str("subject", s.subject).Str("queue", queue).Msg("подписан")
 	}
 
-	log.Printf("xauth: access TTL=%s, refresh TTL=%s", cfg.AccessTTL, cfg.RefreshTTL)
+	log.Info().Str("access_ttl", cfg.AccessTTL.String()).Str("refresh_ttl", cfg.RefreshTTL.String()).Msg("запущен")
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 
-	log.Println("xauth: завершение работы...")
+	log.Info().Msg("завершение работы...")
+	if err := natsClient.Drain(5 * time.Second); err != nil {
+		log.Error().Err(err).Msg("NATS drain")
+	}
 }
