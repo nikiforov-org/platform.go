@@ -8,12 +8,12 @@
 // Пример применения — опциональная защита конкретного эндпоинта:
 //
 //	// Защищённый эндпоинт:
-//	nc.QueueSubscribe("api.v1.http-ms.create", queue,
+//	nc.QueueSubscribe("api.v1.xhttp.create", queue,
 //	    middleware.RequireAuth(authCfg, svc.HandleCreate),
 //	)
 //
 //	// Публичный эндпоинт — без обёртки:
-//	nc.QueueSubscribe("api.v1.http-ms.list", queue, svc.HandleList)
+//	nc.QueueSubscribe("api.v1.xhttp.list", queue, svc.HandleList)
 package middleware
 
 import (
@@ -34,7 +34,7 @@ import (
 // Передаётся при регистрации подписки и хранится в замыкании — глобального состояния нет.
 type AuthConfig struct {
 	// AccessSecret — HMAC-секрет для проверки подписи access-токена.
-	// Должен совпадать с AUTH_ACCESS_SECRET сервиса auth-ms.
+	// Должен совпадать с AUTH_ACCESS_SECRET сервиса xauth.
 	AccessSecret []byte
 
 	// Log — логгер для событий авторизации.

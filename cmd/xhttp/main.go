@@ -60,7 +60,7 @@ func main() {
 	h := xhttp.NewHandlers(natsClient, db, cfg, log)
 
 	// 3. Конфигурация middleware для проверки JWT.
-	// ACCESS_SECRET должен совпадать с AUTH_ACCESS_SECRET сервиса auth-ms.
+	// ACCESS_SECRET должен совпадать с AUTH_ACCESS_SECRET сервиса xauth.
 	authCfg := middleware.AuthConfig{
 		AccessSecret: []byte(os.Getenv("ACCESS_SECRET")),
 		Log:          log,
