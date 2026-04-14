@@ -22,12 +22,16 @@ import (
 	"platform/internal/platform/logger"
 	"platform/internal/platform/nc"
 	"platform/internal/services/xhttp"
+	"platform/utils"
+
+	_ "github.com/lib/pq" // PostgreSQL-драйвер для database/sql
 
 	"github.com/nats-io/nats.go"
 )
 
 func main() {
 	log := logger.New("xhttp")
+	utils.SetLogger(log)
 	cfg := xhttp.LoadConfig()
 
 	// 1. PostgreSQL.

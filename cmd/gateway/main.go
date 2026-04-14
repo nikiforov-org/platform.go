@@ -16,10 +16,12 @@ import (
 	"platform/internal/platform/logger"
 	"platform/internal/platform/nc"
 	"platform/internal/services/gateway"
+	"platform/utils"
 )
 
 func main() {
 	log := logger.New("gateway")
+	utils.SetLogger(log)
 
 	// 1. Конфигурация из переменных окружения.
 	cfg, err := gateway.LoadConfig()

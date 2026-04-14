@@ -20,12 +20,14 @@ import (
 	"platform/internal/platform/logger"
 	"platform/internal/platform/nc"
 	"platform/internal/services/xauth"
+	"platform/utils"
 
 	"github.com/nats-io/nats.go"
 )
 
 func main() {
 	log := logger.New("xauth")
+	utils.SetLogger(log)
 	cfg := xauth.LoadConfig()
 
 	natsClient, err := nc.NewClient(cfg.NATS, log)

@@ -2,7 +2,6 @@
 package xhttp
 
 import (
-	"log"
 	"os"
 	"time"
 
@@ -30,7 +29,8 @@ type Config struct {
 func LoadConfig() Config {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		log.Fatal("xhttp: обязательная переменная DATABASE_URL не задана")
+		log := utils.Logger()
+		log.Fatal().Str("key", "DATABASE_URL").Msg("обязательная переменная окружения не задана")
 	}
 
 	natsCfg := nc.DefaultConfig()

@@ -4,7 +4,6 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/nats-io/nats.go"
 )
@@ -28,7 +27,7 @@ type NATSResponse struct {
 func Reply(msg *nats.Msg, status int, data any, extraHeaders ...string) {
 	body, err := json.Marshal(NATSResponse{Data: data})
 	if err != nil {
-		log.Printf("utils: Reply: marshal error: %v (subject=%s)", err, msg.Subject)
+		pkgLog.Error().Err(err).Str("subject", msg.Subject).Msg("Reply: marshal error")
 		natsRespond(msg, 500, []byte(`{"error":"internal error"}`))
 		return
 	}
@@ -37,7 +36,7 @@ func Reply(msg *nats.Msg, status int, data any, extraHeaders ...string) {
 
 // ReplyError публикует ответ с кодом ошибки и текстом в поле "error".
 func ReplyError(msg *nats.Msg, status int, errText string) {
-	log.Printf("utils: [%s] %d %s", msg.Subject, status, errText)
+	pkgLog.Error().Str("subject", msg.Subject).Int("status", status).Str("error", errText).Msg("ReplyError")
 	// NATSResponse{Error: string} — маршалинг строки не падает; fallback для надёжности.
 	body, err := json.Marshal(NATSResponse{Error: errText})
 	if err != nil {
@@ -62,6 +61,6 @@ func natsRespond(msg *nats.Msg, status int, body []byte, extraHeaders ...string)
 	out.Data = body
 
 	if err := msg.RespondMsg(out); err != nil {
-		log.Printf("utils: natsRespond: %v", err)
+		pkgLog.Error().Err(err).Str("subject", msg.Subject).Msg("natsRespond: ошибка отправки ответа")
 	}
 }

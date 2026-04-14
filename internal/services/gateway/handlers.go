@@ -176,8 +176,8 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 
 	// Ограничиваем чтение тела 1 МБ для защиты от злоупотреблений.
 	const maxBodySize = 1 << 20 // 1 MB
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
 	defer r.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
 	if err != nil {
 		gw.log.Error().Err(err).Str("subject", subject).Msg("ошибка чтения тела запроса")
 		http.Error(w, "failed to read request body", http.StatusBadRequest)

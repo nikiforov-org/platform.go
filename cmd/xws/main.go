@@ -26,12 +26,14 @@ import (
 	"platform/internal/platform/logger"
 	"platform/internal/platform/nc"
 	"platform/internal/services/xws"
+	"platform/utils"
 
 	"github.com/nats-io/nats.go"
 )
 
 func main() {
 	log := logger.New("xws")
+	utils.SetLogger(log)
 	cfg := xws.LoadConfig()
 
 	natsClient, err := nc.NewClient(cfg.NATS, log)

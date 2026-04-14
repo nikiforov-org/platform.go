@@ -2,7 +2,6 @@
 package xauth
 
 import (
-	"log"
 	"os"
 	"time"
 
@@ -44,7 +43,8 @@ func LoadConfig() Config {
 	mustEnv := func(key string) string {
 		v := os.Getenv(key)
 		if v == "" {
-			log.Fatalf("xauth: обязательная переменная %s не задана", key)
+			log := utils.Logger()
+			log.Fatal().Str("key", key).Msg("обязательная переменная окружения не задана")
 		}
 		return v
 	}

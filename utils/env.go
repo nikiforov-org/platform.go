@@ -3,7 +3,6 @@ package utils
 
 import (
 	"fmt"
-	"log"
 	"os"
 )
 
@@ -23,7 +22,7 @@ func GetEnv[T any](key string, fallback T) T {
 
 	var result T
 	if _, err := fmt.Sscan(v, &result); err != nil {
-		log.Printf("WARN: GetEnv: не удалось распарсить %s=%q: %v; используется значение по умолчанию", key, v, err)
+		pkgLog.Warn().Str("key", key).Str("value", v).Err(err).Msg("GetEnv: не удалось распарсить переменную, используется значение по умолчанию")
 		return fallback
 	}
 

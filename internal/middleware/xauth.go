@@ -1,9 +1,7 @@
 // internal/middleware/xauth.go
 //
-// Пакет middleware содержит обёртки над nats.MsgHandler для сквозной логики.
-//
-// В отличие от HTTP-middleware, NATS-middleware — это функция высшего порядка:
-// принимает следующий обработчик и возвращает новый с расширенным поведением.
+// Демо-middleware для JWT-аутентификации.
+// Использует xauth.VerifyJWT и xauth.Claims из демо-сервиса xauth.
 //
 // Пример применения — опциональная защита конкретного эндпоинта:
 //
@@ -17,14 +15,9 @@
 package middleware
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"strings"
 	"time"
 
+	"platform/internal/services/xauth"
 	"platform/utils"
 
 	"github.com/nats-io/nats.go"
@@ -40,14 +33,6 @@ type AuthConfig struct {
 
 	// Log — логгер для событий авторизации.
 	Log zerolog.Logger
-}
-
-// Claims — полезная нагрузка JWT access-токена.
-type Claims struct {
-	Sub string `json:"sub"`
-	Exp int64  `json:"exp"`
-	Jti string `json:"jti"`
-	Iat int64  `json:"iat"`
 }
 
 // RequireAuth возвращает NATS-обёртку над next, которая:
@@ -69,7 +54,7 @@ func RequireAuth(cfg AuthConfig, next nats.MsgHandler) nats.MsgHandler {
 			return
 		}
 
-		c, err := verifyJWT(token, cfg.AccessSecret)
+		c, err := xauth.VerifyJWT(token, cfg.AccessSecret)
 		if err != nil {
 			cfg.Log.Warn().Err(err).Str("subject", msg.Subject).Msg("RequireAuth: невалидный токен")
 			replyUnauthorized(msg, "invalid access token")
@@ -106,36 +91,4 @@ func replyUnauthorized(msg *nats.Msg, text string) {
 		// Ошибка здесь означает потерю reply-subject, что крайне редко.
 		_ = err
 	}
-}
-
-// verifyJWT проверяет HMAC-SHA256 подпись JWT-токена и возвращает Claims.
-// Срок действия (Exp) не проверяется здесь — это ответственность вызывающего кода,
-// чтобы различить "токен истёк" и "токен невалиден" и вернуть разные сообщения.
-func verifyJWT(token string, secret []byte) (Claims, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return Claims{}, fmt.Errorf("неверный формат токена")
-	}
-
-	hp := parts[0] + "." + parts[1]
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(hp))
-	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-
-	// hmac.Equal выполняет сравнение за константное время — защита от timing-атак.
-	if !hmac.Equal([]byte(parts[2]), []byte(expected)) {
-		return Claims{}, fmt.Errorf("невалидная подпись")
-	}
-
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return Claims{}, fmt.Errorf("decode payload: %w", err)
-	}
-
-	var c Claims
-	if err := json.Unmarshal(payloadBytes, &c); err != nil {
-		return Claims{}, fmt.Errorf("unmarshal claims: %w", err)
-	}
-
-	return c, nil
 }

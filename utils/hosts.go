@@ -3,7 +3,6 @@ package utils
 
 import (
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"strings"
@@ -48,7 +47,7 @@ func ParseAllowedHosts(raw string) (AllowedHostSet, error) {
 		for h := range set {
 			hosts = append(hosts, h)
 		}
-		log.Printf("utils: разрешённые хосты Origin: [%s]", strings.Join(hosts, ", "))
+		pkgLog.Info().Strs("hosts", hosts).Msg("разрешённые хосты Origin")
 	}
 
 	return set, nil
@@ -59,7 +58,7 @@ func ParseAllowedHosts(raw string) (AllowedHostSet, error) {
 func MustParseAllowedHosts(raw string) AllowedHostSet {
 	set, err := ParseAllowedHosts(raw)
 	if err != nil {
-		log.Fatalf("utils: ALLOWED_HOSTS: %v", err)
+		pkgLog.Fatal().Err(err).Msg("ALLOWED_HOSTS: невалидный хост")
 	}
 	return set
 }
@@ -81,7 +80,7 @@ func (s AllowedHostSet) Allows(origin string) bool {
 
 	host, err := extractHost(origin)
 	if err != nil {
-		log.Printf("utils: невалидный Origin %q: %v", origin, err)
+		pkgLog.Warn().Str("origin", origin).Err(err).Msg("невалидный Origin")
 		return false
 	}
 
