@@ -37,11 +37,16 @@ type RateLimitConfig struct {
 	// запросов мгновенно, после чего ограничен скоростью Rate req/s.
 	Burst int
 
+	// AuthPathPrefix — URL-префикс, к которому применяется дополнительный жёсткий
+	// per-IP лимит (AuthRate/AuthBurst). Используется для защиты от брутфорса
+	// на маршрутах аутентификации. Если пустой — второй лимит не применяется.
+	AuthPathPrefix string
+
 	// AuthRate — максимальная скорость запросов в секунду с одного IP
-	// для маршрутов /v1/xauth/*. Защищает от брутфорса.
+	// для маршрутов под AuthPathPrefix.
 	AuthRate float64
 
-	// AuthBurst — пиковый размер очереди для auth-маршрутов.
+	// AuthBurst — пиковый размер очереди для маршрутов под AuthPathPrefix.
 	AuthBurst int
 
 	// MaxWSConns — максимальное число одновременных WebSocket-соединений.
@@ -91,8 +96,9 @@ type HTTPConfig struct {
 //
 //	GATEWAY_RATE_LIMIT         — req/s с одного IP (общий)               (100)
 //	GATEWAY_RATE_BURST         — burst (общий)                            (200)
-//	GATEWAY_AUTH_RATE_LIMIT    — req/s с одного IP на /v1/xauth/*        (5)
-//	GATEWAY_AUTH_RATE_BURST    — burst (auth)                             (10)
+//	GATEWAY_AUTH_RATE_PREFIX   — URL-префикс для жёсткого лимита         ("")
+//	GATEWAY_AUTH_RATE_LIMIT    — req/s с одного IP для auth-префикса     (5)
+//	GATEWAY_AUTH_RATE_BURST    — burst для auth-префикса                  (10)
 //	GATEWAY_MAX_WS_CONNS       — макс. одновременных WS-соединений        (1000)
 func LoadConfig() (Config, error) {
 	// ALLOWED_HOSTS читается через os.Getenv, а не utils.GetEnv: значение содержит
@@ -122,11 +128,12 @@ func LoadConfig() (Config, error) {
 		NATS:         natsCfg,
 		AllowedHosts: allowedHosts,
 		RateLimit: RateLimitConfig{
-			Rate:       utils.GetEnv("GATEWAY_RATE_LIMIT", 100.0),
-			Burst:      utils.GetEnv("GATEWAY_RATE_BURST", 200),
-			AuthRate:   utils.GetEnv("GATEWAY_AUTH_RATE_LIMIT", 5.0),
-			AuthBurst:  utils.GetEnv("GATEWAY_AUTH_RATE_BURST", 10),
-			MaxWSConns: utils.GetEnv("GATEWAY_MAX_WS_CONNS", int64(1000)),
+			Rate:           utils.GetEnv("GATEWAY_RATE_LIMIT", 100.0),
+			Burst:          utils.GetEnv("GATEWAY_RATE_BURST", 200),
+			AuthPathPrefix: utils.GetEnv("GATEWAY_AUTH_RATE_PREFIX", ""),
+			AuthRate:       utils.GetEnv("GATEWAY_AUTH_RATE_LIMIT", 5.0),
+			AuthBurst:      utils.GetEnv("GATEWAY_AUTH_RATE_BURST", 10),
+			MaxWSConns:     utils.GetEnv("GATEWAY_MAX_WS_CONNS", int64(1000)),
 		},
 	}, nil
 }

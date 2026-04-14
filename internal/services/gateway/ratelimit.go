@@ -1,9 +1,11 @@
 // internal/services/gateway/ratelimit.go
 //
 // Три уровня ограничений входящего трафика:
-//  1. Per-IP HTTP rate limit    — общий лимит на все маршруты /v1/
-//  2. Per-IP auth rate limit    — жёсткий лимит на /v1/xauth/* (защита от брутфорса)
-//  3. Глобальный WS-счётчик     — максимум одновременных WebSocket-соединений
+//  1. Per-IP HTTP rate limit  — общий лимит на все маршруты /v1/
+//  2. Per-IP auth rate limit  — дополнительный жёсткий лимит на настраиваемый
+//                               URL-префикс (GATEWAY_AUTH_RATE_PREFIX); защита от брутфорса.
+//                               Если префикс не задан — второй лимит не применяется.
+//  3. Глобальный WS-счётчик  — максимум одновременных WebSocket-соединений
 //
 // Алгоритм: Token Bucket (golang.org/x/time/rate).
 // IP-таблица очищается раз в минуту: записи, не активные более 5 минут, удаляются.
@@ -12,6 +14,7 @@ package gateway
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,7 +34,7 @@ type ipEntry struct {
 type rl struct {
 	mu      sync.Mutex
 	general map[string]*ipEntry // общий лимит
-	auth    map[string]*ipEntry // лимит для /v1/xauth/*
+	auth    map[string]*ipEntry // дополнительный жёсткий лимит для настраиваемого URL-префикса
 
 	cfg     RateLimitConfig
 	wsConns atomic.Int64 // текущее число WS-соединений
@@ -110,7 +113,8 @@ func (r *rl) cleanup(stop <-chan struct{}) {
 // middlewareRateLimit применяет per-IP rate limiting к маршрутам /v1/.
 //
 // Порядок проверок:
-//  1. Маршруты /v1/xauth/* проверяются по auth-лимиту (жёстче).
+//  1. Если GATEWAY_AUTH_RATE_PREFIX задан и путь начинается с него —
+//     дополнительно проверяется жёсткий auth-лимит (защита от брутфорса).
 //  2. Все маршруты /v1/ проверяются по общему лимиту.
 //
 // /health не входит в цепочку и не ограничивается.
@@ -118,8 +122,8 @@ func (gw *Gateway) middlewareRateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := realIP(r)
 
-		// Auth-маршруты проверяются первыми: жёсткий лимит против брутфорса.
-		if len(r.URL.Path) >= 10 && r.URL.Path[:10] == "/v1/xauth/" {
+		// Дополнительный жёсткий лимит для настраиваемого префикса — защита от брутфорса.
+		if p := gw.cfg.RateLimit.AuthPathPrefix; p != "" && strings.HasPrefix(r.URL.Path, p) {
 			if !gw.rl.allowAuth(ip) {
 				gw.log.Warn().Str("ip", ip).Str("path", r.URL.Path).Msg("auth rate limit exceeded")
 				w.Header().Set("Content-Type", "application/json")

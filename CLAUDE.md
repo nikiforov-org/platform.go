@@ -49,7 +49,7 @@ HTTP Client → Gateway (:8080) → NATS (:4222) → [xhttp | xauth | xws]
 
 Middleware chain for `/v1/`: `Origin` → `RateLimit` → route.
 
-Rate limiting (`internal/services/gateway/ratelimit.go`): per-IP general limit (`GATEWAY_RATE_LIMIT`, default 100 req/s), per-IP auth limit on `/v1/xauth/*` (`GATEWAY_AUTH_RATE_LIMIT`, default 5 req/s), global WS connection counter (`GATEWAY_MAX_WS_CONNS`, default 1000).
+Rate limiting (`internal/services/gateway/ratelimit.go`): per-IP general limit (`GATEWAY_RATE_LIMIT`, default 100 req/s) applies to all routes; optional stricter per-IP auth limit (`GATEWAY_AUTH_RATE_LIMIT`, default 5 req/s) applies to a configurable URL prefix (`GATEWAY_AUTH_RATE_PREFIX`, default empty — disabled); global WS connection counter (`GATEWAY_MAX_WS_CONNS`, default 1000).
 
 It has no database dependency.
 

@@ -22,7 +22,7 @@ type NATSResponse struct {
 // через заголовок "Status" — без десериализации тела ответа.
 //
 // extraHeaders — опциональные дополнительные заголовки в формате пар "ключ", "значение".
-// Используется для передачи Set-Cookie из xauth через gateway в браузер:
+// Используется для передачи Set-Cookie из сервиса аутентификации через gateway в браузер:
 //
 //	utils.Reply(msg, 200, data, "Set-Cookie", accessCookie, "Set-Cookie", refreshCookie)
 func Reply(msg *nats.Msg, status int, data any, extraHeaders ...string) {
