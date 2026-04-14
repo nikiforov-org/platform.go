@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Local Development
+
+```bash
+# 1. Скопируйте и заполните env-файл
+cp deployments/dev/.env.example deployments/dev/.env
+
+# 2. Запустите инфраструктуру (NATS + PostgreSQL)
+make infra
+
+# 3. Запустите нужные сервисы в отдельных терминалах
+make run-gateway
+make run-xauth
+make run-xhttp
+make run-xws
+```
+
+`make infra` поднимает однонодовый NATS с JetStream и PostgreSQL через Docker Compose.
+NATS-мониторинг доступен на http://localhost:8222.
+
 ## Build Commands
 
 ```bash
@@ -95,7 +114,12 @@ All configuration is loaded from environment variables only. Each service has a 
 | xauth   | `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_ACCESS_SECRET`, `AUTH_REFRESH_SECRET` |
 | gateway | `ALLOWED_HOSTS` (comma-separated origins, e.g. `localhost:3000,example.com`) |
 
-All services share `NATS_HOST` (default `127.0.0.1`), `NATS_PORT` (default `4222`), `NATS_USER`, `NATS_PASSWORD`, `LOG_LEVEL` (default `info`; values: `debug`, `info`, `warn`, `error`).
+All services share `NATS_HOST` (default `127.0.0.1`), `NATS_PORT` (default `4222`), `NATS_USER`, `NATS_PASSWORD`, `NATS_KV_REPLICAS` (default `3`; **set to `1` for single-node dev**), `LOG_LEVEL` (default `info`; values: `debug`, `info`, `warn`, `error`).
+
+**Important dev-only overrides:**
+- `NATS_KV_REPLICAS=1` — production default is `3` (cluster), single-node dev requires `1`
+- `COOKIE_SECURE=false` — production default is `true` (HTTPS); local HTTP dev requires `false` or browsers won't send auth cookies
+- `ACCESS_SECRET` in xhttp/xws must equal `AUTH_ACCESS_SECRET` in xauth — they share the same HMAC key
 
 ## Deployment
 

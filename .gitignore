@@ -1,0 +1,7 @@
+deployments/dev/.env
+
+# Скомпилированные бинарники (go build ./cmd/...)
+gateway
+xhttp
+xauth
+xws

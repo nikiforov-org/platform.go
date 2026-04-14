@@ -116,6 +116,7 @@ func LoadConfig() (Config, error) {
 	natsCfg.Auth.Password = utils.GetEnv("NATS_PASSWORD", "")
 	natsCfg.Reconnect.MaxAttempts = utils.GetEnv("NATS_RECONNECT_ATTEMPTS", natsCfg.Reconnect.MaxAttempts)
 	natsCfg.Reconnect.WaitDuration = utils.GetEnv("NATS_RECONNECT_WAIT", 2*time.Second)
+	natsCfg.KV.BucketName = "" // Gateway не использует KV — инициализация бакета не нужна.
 
 	return Config{
 		HTTP: HTTPConfig{

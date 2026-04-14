@@ -17,6 +17,7 @@ import (
 //	NATS_PORT            — порт NATS-сервера                 (4222)
 //	NATS_USER            — логин авторизации                 ("")
 //	NATS_PASSWORD        — пароль авторизации                ("")
+//	NATS_KV_REPLICAS     — число реплик KV-бакета            (3; для dev: 1)
 //	AUTH_USERNAME        — логин пользователя                (обязательно)
 //	AUTH_PASSWORD        — пароль пользователя               (обязательно)
 //	AUTH_ACCESS_SECRET   — HMAC-секрет для access-токенов   (обязательно)
@@ -56,7 +57,7 @@ func LoadConfig() Config {
 	natsCfg.Auth.Password = utils.GetEnv("NATS_PASSWORD", "")
 	// KV-бакет для хранения JTI refresh-токенов (для отзыва при logout/ротации).
 	natsCfg.KV.BucketName = "authms_refresh_tokens"
-	natsCfg.KV.Replicas = 3
+	natsCfg.KV.Replicas = utils.GetEnv("NATS_KV_REPLICAS", natsCfg.KV.Replicas)
 	natsCfg.KV.History = 1
 
 	return Config{

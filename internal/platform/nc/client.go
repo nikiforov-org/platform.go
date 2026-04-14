@@ -135,7 +135,7 @@ func DefaultConfig() Config {
 		},
 		KV: KVConfig{
 			BucketName:   "platform_state",
-			Replicas:     3, // три узла в cluster { routes } в nats.conf
+			Replicas:     3, // переопределяется через NATS_KV_REPLICAS (в dev: 1)
 			History:      5, // последние 5 ревизий ключа
 			MaxValueSize: 0, // без дополнительного ограничения на уровне Go
 		},
