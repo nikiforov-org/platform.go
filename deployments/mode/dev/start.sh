@@ -182,19 +182,153 @@ wait_nomad() {
 }
 
 # =============================================================================
-# Деплой джобов
+# Деплой джобов (dev-режим, бинарники из локального bin/)
+#
+# Prod job-файлы используют artifact для скачивания из GitHub Releases.
+# В dev artifact не нужен — генерируем упрощённые inline-джобы с прямым
+# путём к локально собранным бинарникам.
 # =============================================================================
 deploy_jobs() {
-  local binary_dir=$1
-  log "Деплой джобов..."
-  nomad job run \
-    -var-file="$VARS_FILE" \
-    -var="binary_dir=$binary_dir" \
-    "$JOB_PLATFORM"
-  nomad job run \
-    -var-file="$VARS_FILE" \
-    -var="binary_dir=$binary_dir" \
-    "$JOB_XSERVICES"
+  local bin_dir=$1
+  log "Деплой джобов (локальные бинарники: $bin_dir)..."
+
+  # Считываем dev.vars в ассоциативный массив для подстановки в джобы
+  local -A v=()
+  while IFS='=' read -r key val; do
+    [[ "$key" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "$key" ]] && continue
+    key="${key// /}"
+    val="${val// /}"
+    val="${val//\"/}"
+    v["$key"]="$val"
+  done < "$VARS_FILE"
+
+  # platform.nomad (Gateway)
+  cat > /tmp/platform-dev.nomad << NOMAD
+job "platform" {
+  datacenters = ["dc1"]
+  type        = "service"
+
+  update {
+    max_parallel     = 1
+    min_healthy_time = "10s"
+    healthy_deadline = "3m"
+    auto_revert      = true
+  }
+
+  group "gateway" {
+    count = 1
+    network { port "http" { static = 8080 } }
+    logs { max_files = 5; max_file_size = 10 }
+    restart { attempts = 10; interval = "5m"; delay = "15s"; mode = "delay" }
+
+    task "gateway" {
+      driver = "raw_exec"
+      config { command = "$bin_dir/gateway" }
+      env {
+        NATS_HOST                = "127.0.0.1"
+        NATS_PORT                = "4222"
+        NATS_USER                = "${v[nats_user]}"
+        NATS_PASSWORD            = "${v[nats_password]}"
+        HTTP_ADDR                = ":8080"
+        ALLOWED_HOSTS            = "${v[allowed_hosts]}"
+        GATEWAY_AUTH_RATE_PREFIX = "${v[gateway_auth_rate_prefix]}"
+        LOG_LEVEL                = "${v[log_level]}"
+      }
+      service {
+        name = "gateway"; port = "http"; provider = "nomad"
+        check { name = "http-health"; type = "http"; path = "/health"; interval = "10s"; timeout = "3s" }
+      }
+      resources { cpu = 200; memory = 64 }
+    }
+  }
+}
+NOMAD
+
+  # xservices.nomad (xauth + xhttp + xws)
+  cat > /tmp/xservices-dev.nomad << NOMAD
+job "xservices" {
+  datacenters = ["dc1"]
+  type        = "service"
+
+  update {
+    max_parallel     = 1
+    min_healthy_time = "10s"
+    healthy_deadline = "3m"
+    auto_revert      = true
+  }
+
+  group "xauth" {
+    count = 1
+    logs { max_files = 5; max_file_size = 10 }
+    restart { attempts = 10; interval = "5m"; delay = "15s"; mode = "delay" }
+    task "xauth" {
+      driver = "raw_exec"
+      config { command = "$bin_dir/xauth" }
+      env {
+        NATS_HOST           = "127.0.0.1"
+        NATS_PORT           = "4222"
+        NATS_USER           = "${v[nats_user]}"
+        NATS_PASSWORD       = "${v[nats_password]}"
+        AUTH_USERNAME       = "${v[auth_username]}"
+        AUTH_PASSWORD       = "${v[auth_password]}"
+        AUTH_ACCESS_SECRET  = "${v[auth_access_secret]}"
+        AUTH_REFRESH_SECRET = "${v[auth_refresh_secret]}"
+        AUTH_ACCESS_TTL     = "${v[auth_access_ttl]:-15m}"
+        AUTH_REFRESH_TTL    = "${v[auth_refresh_ttl]:-168h}"
+        COOKIE_DOMAIN       = "${v[cookie_domain]}"
+        COOKIE_SECURE       = "${v[cookie_secure]:-false}"
+        LOG_LEVEL           = "${v[log_level]}"
+      }
+      resources { cpu = 100; memory = 32 }
+    }
+  }
+
+  group "xhttp" {
+    count = 1
+    logs { max_files = 5; max_file_size = 10 }
+    restart { attempts = 10; interval = "5m"; delay = "15s"; mode = "delay" }
+    task "xhttp" {
+      driver = "raw_exec"
+      config { command = "$bin_dir/xhttp" }
+      env {
+        NATS_HOST     = "127.0.0.1"
+        NATS_PORT     = "4222"
+        NATS_USER     = "${v[nats_user]}"
+        NATS_PASSWORD = "${v[nats_password]}"
+        DATABASE_URL  = "${v[database_url]}"
+        ACCESS_SECRET = "${v[access_secret]}"
+        CACHE_TTL     = "${v[cache_ttl]:-30s}"
+        LOG_LEVEL     = "${v[log_level]}"
+      }
+      resources { cpu = 100; memory = 64 }
+    }
+  }
+
+  group "xws" {
+    count = 1
+    logs { max_files = 5; max_file_size = 10 }
+    restart { attempts = 10; interval = "5m"; delay = "15s"; mode = "delay" }
+    task "xws" {
+      driver = "raw_exec"
+      config { command = "$bin_dir/xws" }
+      env {
+        NATS_HOST          = "127.0.0.1"
+        NATS_PORT          = "4222"
+        NATS_USER          = "${v[nats_user]}"
+        NATS_PASSWORD      = "${v[nats_password]}"
+        ACCESS_SECRET      = "${v[access_secret]}"
+        INACTIVITY_TIMEOUT = "${v[inactivity_timeout]:-3m}"
+        LOG_LEVEL          = "${v[log_level]}"
+      }
+      resources { cpu = 100; memory = 32 }
+    }
+  }
+}
+NOMAD
+
+  nomad job run /tmp/platform-dev.nomad
+  nomad job run /tmp/xservices-dev.nomad
   info "Джобы задеплоены"
 }
 

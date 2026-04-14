@@ -1,14 +1,26 @@
 # deployments/services/nomad/platform.nomad
 #
 # Nomad-джоб платформы: Gateway.
-# Драйвер: raw_exec — бинарники запускаются напрямую, без Docker.
+# Бинарники скачиваются из GitHub Releases через блок artifact.
 #
 # Деплой:
-#   nomad job run -var-file=deployments/mode/prod/prod.vars deployments/services/nomad/platform.nomad
+#   nomad job run \
+#     -var-file=deployments/mode/prod/prod.vars \
+#     deployments/services/nomad/platform.nomad
 
-variable "binary_dir" {
-  description = "Директория с бинарниками сервисов."
-  default     = "/usr/local/bin"
+variable "github_repo" {
+  description = "GitHub репозиторий в формате owner/repo, например: myorg/platform.go"
+  default     = ""
+}
+
+variable "version" {
+  description = "Версия релиза, например: v1.2.3"
+  default     = ""
+}
+
+variable "arch" {
+  description = "Архитектура: amd64 или arm64"
+  default     = "amd64"
 }
 
 variable "nats_user" {
@@ -68,8 +80,14 @@ job "platform" {
     task "gateway" {
       driver = "raw_exec"
 
+      # Скачать бинарник из GitHub Releases и распаковать в local/
+      artifact {
+        source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/gateway_linux_${var.arch}.tar.gz"
+        destination = "local/"
+      }
+
       config {
-        command = "${var.binary_dir}/gateway"
+        command = "local/gateway"
       }
 
       env {

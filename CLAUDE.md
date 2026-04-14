@@ -124,10 +124,12 @@ All services share `NATS_HOST` (default `127.0.0.1`), `NATS_PORT` (default `4222
 
 Services are deployed via **Nomad with raw exec driver** (no Docker). Each node runs Nomad in hybrid server+client mode.
 
-CI/CD flow:
-1. GitHub Actions builds static binaries: `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/...`
-2. Binaries are copied to `/usr/local/bin/` on all servers via `scp`
-3. `nomad job run deployments/nomad/apps.nomad` triggers rolling update
+CI/CD flow (GitHub Releases):
+1. Push a tag `v*` → GitHub Actions (`.github/workflows/release.yml`) builds static binaries for `linux/amd64` and `linux/arm64`, packages each into `.tar.gz`, creates a GitHub Release.
+2. Set `github_repo`, `version`, and secrets in `deployments/mode/prod/prod.vars`.
+3. `nomad job run -var-file=prod.vars deployments/services/nomad/platform.nomad` — Nomad downloads binaries from the Release via `artifact {}` block and performs rolling update.
+
+Rollback: change `version` in `prod.vars` and re-run `nomad job run`.
 
 Key Nomad behaviors:
 - `/health` endpoint used by Nomad for self-healing — Gateway returns `200` if NATS is up, `503` otherwise; Nomad restarts on failure

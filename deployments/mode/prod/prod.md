@@ -75,14 +75,32 @@ systemctl enable --now nomad
 | 4647–4648 | TCP/UDP  | Nomad RPC / Serf gossip |
 | 8080      | TCP      | Gateway (внешний)       |
 
-## Деплой сервисов
+## CI/CD (GitHub Actions)
+
+Деплой происходит через GitHub Releases — без Docker Registry и без прямого доступа к серверам при деплое.
+
+### Релиз
 
 ```bash
-# Скопировать prod.vars.example → prod.vars, заполнить реальными значениями
-cp deployments/mode/prod/prod.vars.example deployments/mode/prod/prod.vars
-# ... отредактировать prod.vars ...
+git tag v1.2.3
+git push origin v1.2.3
+```
 
-# Задеплоить
+GitHub Actions (`.github/workflows/release.yml`) автоматически:
+1. Собирает бинарники для `linux/amd64` и `linux/arm64` с `CGO_ENABLED=0`
+2. Упаковывает каждый в `.tar.gz` (сохраняет права на исполнение)
+3. Создаёт GitHub Release с архивами
+
+### Деплой на кластер
+
+Nomad скачивает бинарники прямо из GitHub Releases через блок `artifact` в job-файлах.
+
+```bash
+# Скопировать шаблон и заполнить значениями
+cp deployments/mode/prod/prod.vars.example deployments/mode/prod/prod.vars
+# ... указать github_repo, version, секреты ...
+
+# Задеплоить (Nomad сам скачает нужную версию)
 nomad job run \
   -var-file=deployments/mode/prod/prod.vars \
   deployments/services/nomad/platform.nomad
@@ -92,15 +110,11 @@ nomad job run \
   deployments/services/nomad/xservices.nomad
 ```
 
-## CI/CD (GitHub Actions)
+Nomad выполняет rolling update: перезапускает по одной аллокации, дожидается `GET /health → 200` перед следующей. Zero downtime.
 
-Автоматический деплой при push в `main`:
+### Откат
 
-1. GitHub Actions собирает бинарники: `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/...`
-2. Копирует на все ноды через `scp`: `/usr/local/bin/{gateway,xauth,xhttp,xws}`
-3. Запускает `nomad job run` на одной из нод — Nomad выполняет rolling update
-
-Rolling update: Nomad перезапускает по одной аллокации, дожидается healthy (`/health` → 200) перед следующей. Zero downtime.
+Достаточно указать предыдущий тег в `prod.vars` и перезапустить `nomad job run`.
 
 ## Масштабирование
 

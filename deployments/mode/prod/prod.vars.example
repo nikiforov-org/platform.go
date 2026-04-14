@@ -5,8 +5,18 @@
 # Не коммитьте prod.vars в репозиторий.
 #
 # Использование:
-#   nomad job run -var-file=prod.vars deployments/services/nomad/platform.nomad
-#   nomad job run -var-file=prod.vars deployments/services/nomad/xservices.nomad
+#   nomad job run \
+#     -var-file=deployments/mode/prod/prod.vars \
+#     deployments/services/nomad/platform.nomad
+#
+#   nomad job run \
+#     -var-file=deployments/mode/prod/prod.vars \
+#     deployments/services/nomad/xservices.nomad
+
+# GitHub Release (откуда Nomad скачивает бинарники)
+github_repo = ""        # owner/repo, например: myorg/platform.go
+version     = ""        # тег релиза, например: v1.2.3
+arch        = "amd64"   # amd64 или arm64
 
 # NATS
 nats_user     = ""
@@ -20,8 +30,8 @@ log_level                = "info"
 # xauth
 auth_username       = ""
 auth_password       = ""
-auth_access_secret  = ""   # минимум 32 случайных байта: openssl rand -hex 32
-auth_refresh_secret = ""   # минимум 32 случайных байта: openssl rand -hex 32
+auth_access_secret  = ""   # openssl rand -hex 32
+auth_refresh_secret = ""   # openssl rand -hex 32
 cookie_domain       = ""   # например: ".example.com"
 cookie_secure       = "true"
 

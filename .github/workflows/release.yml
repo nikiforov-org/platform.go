@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # создание релиза и загрузка артефактов
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          for svc in gateway xauth xhttp xws; do
+            for arch in amd64 arm64; do
+              GOOS=linux GOARCH=$arch CGO_ENABLED=0 \
+                go build -trimpath -o dist/$svc ./cmd/$svc
+              chmod +x dist/$svc
+              tar -czf dist/${svc}_linux_${arch}.tar.gz -C dist $svc
+              rm dist/$svc
+            done
+          done
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true

@@ -1,15 +1,26 @@
 # deployments/services/nomad/xservices.nomad
 #
 # Nomad-джоб демо-сервисов (xauth, xhttp, xws).
-# Используется только для демонстрации возможностей платформы.
-# В production-проекте замените собственными сервисами.
+# Бинарники скачиваются из GitHub Releases через блок artifact.
 #
 # Деплой:
-#   nomad job run -var-file=deployments/mode/prod/prod.vars deployments/services/nomad/xservices.nomad
+#   nomad job run \
+#     -var-file=deployments/mode/prod/prod.vars \
+#     deployments/services/nomad/xservices.nomad
 
-variable "binary_dir" {
-  description = "Директория с бинарниками сервисов."
-  default     = "/usr/local/bin"
+variable "github_repo" {
+  description = "GitHub репозиторий в формате owner/repo, например: myorg/platform.go"
+  default     = ""
+}
+
+variable "version" {
+  description = "Версия релиза, например: v1.2.3"
+  default     = ""
+}
+
+variable "arch" {
+  description = "Архитектура: amd64 или arm64"
+  default     = "amd64"
 }
 
 variable "nats_user" {
@@ -108,8 +119,13 @@ job "xservices" {
     task "xauth" {
       driver = "raw_exec"
 
+      artifact {
+        source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/xauth_linux_${var.arch}.tar.gz"
+        destination = "local/"
+      }
+
       config {
-        command = "${var.binary_dir}/xauth"
+        command = "local/xauth"
       }
 
       env {
@@ -156,8 +172,13 @@ job "xservices" {
     task "xhttp" {
       driver = "raw_exec"
 
+      artifact {
+        source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/xhttp_linux_${var.arch}.tar.gz"
+        destination = "local/"
+      }
+
       config {
-        command = "${var.binary_dir}/xhttp"
+        command = "local/xhttp"
       }
 
       env {
@@ -199,8 +220,13 @@ job "xservices" {
     task "xws" {
       driver = "raw_exec"
 
+      artifact {
+        source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/xws_linux_${var.arch}.tar.gz"
+        destination = "local/"
+      }
+
       config {
-        command = "${var.binary_dir}/xws"
+        command = "local/xws"
       }
 
       env {
