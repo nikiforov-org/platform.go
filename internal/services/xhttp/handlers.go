@@ -233,7 +233,12 @@ func (h *Handlers) HandleDelete(msg *nats.Msg) {
 		utils.ReplyError(msg, 500, "db error")
 		return
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		utils.ReplyError(msg, 500, "db error")
+		return
+	}
+	if n == 0 {
 		utils.ReplyError(msg, 404, "not found")
 		return
 	}

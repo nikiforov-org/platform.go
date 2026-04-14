@@ -94,7 +94,12 @@ func (h *Handlers) HandleRefresh(msg *nats.Msg) {
 
 	// Проверяем, что JTI не был отозван (logout или предыдущая ротация).
 	val, err := h.nc.GetValue(ctx, h.cfg.NATS.KV.BucketName, c.Jti)
-	if err != nil || val == nil || string(val) == "revoked" {
+	if err != nil {
+		h.log.Error().Err(err).Str("jti", c.Jti).Msg("HandleRefresh: KV get error")
+		utils.ReplyError(msg, 500, "internal error")
+		return
+	}
+	if val == nil || string(val) == "revoked" {
 		utils.ReplyError(msg, 401, "refresh token revoked")
 		return
 	}

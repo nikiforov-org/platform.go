@@ -26,14 +26,23 @@ type NATSResponse struct {
 //
 //	utils.Reply(msg, 200, data, "Set-Cookie", accessCookie, "Set-Cookie", refreshCookie)
 func Reply(msg *nats.Msg, status int, data any, extraHeaders ...string) {
-	body, _ := json.Marshal(NATSResponse{Data: data})
+	body, err := json.Marshal(NATSResponse{Data: data})
+	if err != nil {
+		log.Printf("utils: Reply: marshal error: %v (subject=%s)", err, msg.Subject)
+		natsRespond(msg, 500, []byte(`{"error":"internal error"}`))
+		return
+	}
 	natsRespond(msg, status, body, extraHeaders...)
 }
 
 // ReplyError публикует ответ с кодом ошибки и текстом в поле "error".
 func ReplyError(msg *nats.Msg, status int, errText string) {
 	log.Printf("utils: [%s] %d %s", msg.Subject, status, errText)
-	body, _ := json.Marshal(NATSResponse{Error: errText})
+	// NATSResponse{Error: string} — маршалинг строки не падает; fallback для надёжности.
+	body, err := json.Marshal(NATSResponse{Error: errText})
+	if err != nil {
+		body = []byte(`{"error":"internal error"}`)
+	}
 	natsRespond(msg, status, body)
 }
 

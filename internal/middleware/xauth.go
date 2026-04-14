@@ -22,9 +22,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
+
+	"platform/utils"
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog"
@@ -62,7 +63,7 @@ type Claims struct {
 // Для принудительного отзыва используйте короткий AUTH_ACCESS_TTL.
 func RequireAuth(cfg AuthConfig, next nats.MsgHandler) nats.MsgHandler {
 	return func(msg *nats.Msg) {
-		token := cookieFromMsg(msg, "access_token")
+		token := utils.GetCookie(msg, "access_token")
 		if token == "" {
 			replyUnauthorized(msg, "access token missing")
 			return
@@ -105,21 +106,6 @@ func replyUnauthorized(msg *nats.Msg, text string) {
 		// Ошибка здесь означает потерю reply-subject, что крайне редко.
 		_ = err
 	}
-}
-
-// cookieFromMsg извлекает значение куки из заголовка "Cookie" NATS-сообщения.
-// Переиспользует стандартный парсер http.Request — без самописного парсинга.
-func cookieFromMsg(msg *nats.Msg, name string) string {
-	raw := msg.Header.Get("Cookie")
-	if raw == "" {
-		return ""
-	}
-	r := &http.Request{Header: http.Header{"Cookie": []string{raw}}}
-	c, err := r.Cookie(name)
-	if err != nil {
-		return ""
-	}
-	return c.Value
 }
 
 // verifyJWT проверяет HMAC-SHA256 подпись JWT-токена и возвращает Claims.
