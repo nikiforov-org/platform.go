@@ -59,7 +59,7 @@ func (h *Handlers) HandleCreate(msg *nats.Msg) {
 
 	var it Item
 	err := h.db.QueryRowContext(ctx, `
-		INSERT INTO items (name, value)
+		INSERT INTO xhttp (name, value)
 		VALUES ($1, $2)
 		RETURNING id, name, value, created_at, updated_at`,
 		req.Name, req.Value,
@@ -104,7 +104,7 @@ func (h *Handlers) HandleGet(msg *nats.Msg) {
 	var it Item
 	err := h.db.QueryRowContext(ctx, `
 		SELECT id, name, value, created_at, updated_at
-		FROM items WHERE id = $1`,
+		FROM xhttp WHERE id = $1`,
 		req.ID,
 	).Scan(&it.ID, &it.Name, &it.Value, &it.CreatedAt, &it.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -132,9 +132,9 @@ func (h *Handlers) HandleList(msg *nats.Msg) {
 
 	// Cache hit.
 	if cached := h.cache.Get(ctx, "list"); len(cached) > 0 {
-		var items []Item
-		if json.Unmarshal(cached, &items) == nil {
-			utils.Reply(msg, 200, items)
+		var xhttp []Item
+		if json.Unmarshal(cached, &xhttp) == nil {
+			utils.Reply(msg, 200, xhttp)
 			return
 		}
 	}
@@ -142,32 +142,32 @@ func (h *Handlers) HandleList(msg *nats.Msg) {
 	// Cache miss.
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT id, name, value, created_at, updated_at
-		FROM items ORDER BY id`)
+		FROM xhttp ORDER BY id`)
 	if err != nil {
 		utils.ReplyError(msg, 500, "db error")
 		return
 	}
 	defer rows.Close()
 
-	items := make([]Item, 0)
+	xhttp := make([]Item, 0)
 	for rows.Next() {
 		var it Item
 		if err := rows.Scan(&it.ID, &it.Name, &it.Value, &it.CreatedAt, &it.UpdatedAt); err != nil {
 			utils.ReplyError(msg, 500, "db scan error")
 			return
 		}
-		items = append(items, it)
+		xhttp = append(xhttp, it)
 	}
 	if err := rows.Err(); err != nil {
 		utils.ReplyError(msg, 500, "db error")
 		return
 	}
 
-	if encoded, err := json.Marshal(items); err == nil {
+	if encoded, err := json.Marshal(xhttp); err == nil {
 		h.cache.Put(ctx, "list", encoded)
 	}
 
-	utils.Reply(msg, 200, items)
+	utils.Reply(msg, 200, xhttp)
 }
 
 // HandleUpdate обновляет запись и инвалидирует кэш записи и списка.
@@ -190,7 +190,7 @@ func (h *Handlers) HandleUpdate(msg *nats.Msg) {
 
 	var it Item
 	err := h.db.QueryRowContext(ctx, `
-		UPDATE items SET name = $1, value = $2, updated_at = NOW()
+		UPDATE xhttp SET name = $1, value = $2, updated_at = NOW()
 		WHERE id = $3
 		RETURNING id, name, value, created_at, updated_at`,
 		req.Name, req.Value, req.ID,
@@ -224,7 +224,7 @@ func (h *Handlers) HandleDelete(msg *nats.Msg) {
 		return
 	}
 
-	res, err := h.db.ExecContext(ctx, `DELETE FROM items WHERE id = $1`, req.ID)
+	res, err := h.db.ExecContext(ctx, `DELETE FROM xhttp WHERE id = $1`, req.ID)
 	if err != nil {
 		utils.ReplyError(msg, 500, "db error")
 		return
