@@ -3,13 +3,12 @@
 # Конфигурация Nomad-агента в гибридном режиме (server + client).
 # Один файл для всех нод.
 #
-# Переменные окружения (задаются в systemd-юните):
-#   NOMAD_BOOTSTRAP_EXPECT — число server-нод для формирования кластера
+# Переменные окружения (задаются в /etc/nomad/env, раскрываются Nomad при старте):
+#   PLATFORM_DOMAIN — домен A-записей кластера (все ноды)
 #
-# Пример systemd-юнита (/etc/systemd/system/nomad.service):
-#   [Service]
-#   Environment=NOMAD_BOOTSTRAP_EXPECT=3
-#   ExecStart=/usr/local/bin/nomad agent -config=/etc/nomad/nomad.hcl
+# bootstrap_expect = 1: нода сразу готова к работе.
+# server_join retry_join: при наличии других нод в DNS автоматически входит
+# в существующий кластер; при отсутствии — работает как single-node кластер.
 
 data_dir  = "/var/lib/nomad"
 log_level = "INFO"
@@ -25,12 +24,20 @@ advertise {
 
 server {
   enabled          = true
-  bootstrap_expect = "${NOMAD_BOOTSTRAP_EXPECT}"
+  bootstrap_expect = 1
 
   job_gc_threshold        = "4h"
   eval_gc_threshold       = "4h"
   deployment_gc_threshold = "4h"
   node_gc_threshold       = "24h"
+}
+
+# Автообнаружение кластера через DNS.
+# Все ноды имеют A-записи PLATFORM_DOMAIN — Nomad находит их здесь.
+server_join {
+  retry_join     = ["${PLATFORM_DOMAIN}"]
+  retry_max      = 0
+  retry_interval = "15s"
 }
 
 client {

@@ -3,69 +3,179 @@
 ## Архитектура
 
 Каждая нода запускает:
-- **NATS** — часть кластера, связанного через DNS Discovery (`nodes.up.mt`)
+- **NATS** — часть кластера, связанного через DNS Discovery (`PLATFORM_DOMAIN`)
 - **Nomad** — hybrid server+client, управляет сервисами через raw_exec
 - **Go-бинарники** — запускаются Nomad напрямую, без Docker
 
-Внешний трафик: Managed Load Balancer → Gateway (:8080) → NATS → сервисы.
+Трафик: DNS → Gateway (:8080) → NATS → сервисы.
 
-## Первичная настройка серверов
+---
 
-### NATS
+## Добавление новой ноды — 3 шага
 
-```bash
-# Создать пользователя и директории
-useradd -r -s /bin/false nats
-mkdir -p /var/lib/nats/jetstream /etc/nats
-chown -R nats:nats /var/lib/nats
+### 1. Купить VPS
+Ubuntu 22.04 или 24.04. SSH-ключ из GitHub Secret `DEPLOY_SSH_KEY` должен быть
+добавлен в `~/.ssh/authorized_keys` при создании (через панель провайдера).
 
-# Скопировать конфиг
-scp deployments/infra/nats/nats.conf user@node:/etc/nats/nats.conf
+### 2. Добавить A-запись DNS
 
-# Создать systemd-юнит /etc/systemd/system/nats.service:
-# [Unit]
-# Description=NATS Server
-# After=network.target
-#
-# [Service]
-# User=nats
-# Environment=HOSTNAME=node1
-# Environment=NODE_IP=10.0.0.1
-# Environment=NATS_CLUSTER_USER=cluster-user
-# Environment=NATS_CLUSTER_PASSWORD=cluster-password
-# ExecStart=/usr/local/bin/nats-server -c /etc/nats/nats.conf
-# Restart=always
-#
-# [Install]
-# WantedBy=multi-user.target
+Добавьте A-запись вашего кластерного домена (`PLATFORM_DOMAIN`) → IP новой ноды.
 
-systemctl enable --now nats
-```
+| Тип | Имя                   | Значение    |
+|-----|-----------------------|-------------|
+| A   | `nodes.example.com`   | `IP_НОДЫ`   |
 
-### Nomad
+Одновременно можно добавить A-запись публичного домена (для балансировки — см. раздел ниже).
+
+### 3. Запустить одну команду на сервере
 
 ```bash
-mkdir -p /var/lib/nomad /etc/nomad
-scp deployments/infra/nomad/nomad.hcl user@node:/etc/nomad/nomad.hcl
-
-# Создать systemd-юнит /etc/systemd/system/nomad.service:
-# [Unit]
-# Description=Nomad Agent
-# After=network.target nats.service
-#
-# [Service]
-# Environment=NOMAD_BOOTSTRAP_EXPECT=3
-# ExecStart=/usr/local/bin/nomad agent -config=/etc/nomad/nomad.hcl
-# Restart=always
-# KillSignal=SIGINT
-#
-# [Install]
-# WantedBy=multi-user.target
-
-systemctl enable --now nomad
+wget -qO- https://raw.githubusercontent.com/OWNER/REPO/main/deployments/envs/prod/setup.sh \
+  | PLATFORM_DOMAIN=nodes.example.com \
+    NATS_USER=nats \
+    NATS_PASSWORD=secret \
+    bash
 ```
 
-## Firewall (между нодами)
+Или через curl:
+```bash
+curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/deployments/envs/prod/setup.sh \
+  | PLATFORM_DOMAIN=nodes.example.com \
+    NATS_USER=nats \
+    NATS_PASSWORD=secret \
+    bash
+```
+
+Скрипт (~2-3 мин):
+- Настраивает оптимальный swap (2×RAM, ≤10% диска, ≤4 GB)
+- Устанавливает Nomad и NATS
+- Создаёт systemd-сервисы с credentials в `/etc/nats/env`, `/etc/nomad/env` (chmod 600)
+- Настраивает ufw
+- Запускает сервисы
+
+**После запуска скрипта нода автоматически находит остальные ноды через DNS
+и входит в кластер — неважно, первая ли это нода или двадцать первая.**
+
+---
+
+## Балансировка трафика
+
+Доступно два варианта — они не исключают друг друга.
+
+### Вариант 1: Пассивная балансировка через DNS (round-robin)
+
+Добавьте A-записи публичного домена для каждой ноды с Gateway:
+
+| Тип | Имя              | Значение  |
+|-----|------------------|-----------|
+| A   | `api.example.com` | `IP_1`   |
+| A   | `api.example.com` | `IP_2`   |
+| A   | `api.example.com` | `IP_3`   |
+
+DNS-клиенты случайно выбирают один из IP. Без единой точки отказа, бесплатно.
+`GATEWAY_TRUSTED_PROXY` не нужен.
+
+### Вариант 2: Балансировщик нагрузки (managed LB)
+
+Один A-запись публичного домена → IP балансировщика:
+
+| Тип | Имя              | Значение  |
+|-----|------------------|-----------|
+| A   | `api.example.com` | `LB_IP`  |
+
+LB проксирует трафик на все ноды (:8080) и проставляет `X-Real-IP`.
+Задайте `GATEWAY_TRUSTED_PROXY = IP_LB` в GitHub Secrets — Gateway будет
+доверять `X-Real-IP` только от LB, защищая rate limiter от спуфинга.
+
+---
+
+## CI/CD (GitHub Actions)
+
+### Схема
+
+```
+push → main
+  └── ci  (build + vet + test)
+        └── deploy  (только если CI прошёл)
+              ├── Сборка бинарников (linux/amd64, linux/arm64)
+              ├── GitHub pre-release build-{N}
+              └── SSH → git clone/pull + nomad job run
+```
+
+На каждый push в `main` происходит автоматический rolling update.
+Versioned-релизы создаются по тегу `v*` (`release.yml`) — для ручного/rollback деплоя.
+
+### GitHub Secrets
+
+Задаются в `Settings → Secrets and variables → Actions`:
+
+| Secret                    | Используется в | Описание |
+|---------------------------|----------------|----------|
+| `DEPLOY_SSH_KEY`          | setup, deploy  | Приватный Ed25519-ключ |
+| `DEPLOY_USER`             | setup, deploy  | SSH-пользователь (`ubuntu`) |
+| `DEPLOY_HOST`             | deploy         | IP или hostname primary-ноды |
+| `NATS_USER`               | setup, deploy  | Логин NATS |
+| `NATS_PASSWORD`           | setup, deploy  | Пароль NATS |
+| `ALLOWED_HOSTS`           | deploy         | Разрешённые Origin (`example.com,api.example.com`) |
+| `GATEWAY_AUTH_RATE_PREFIX`| deploy         | URL-префикс жёсткого rate limit (`/v1/xauth/`) |
+| `GATEWAY_TRUSTED_PROXY`   | deploy         | IP LB для X-Real-IP (пусто при DNS round-robin) |
+| `AUTH_USERNAME`           | deploy         | Логин xauth |
+| `AUTH_PASSWORD`           | deploy         | Пароль xauth |
+| `AUTH_ACCESS_SECRET`      | deploy         | HMAC-ключ access JWT (`openssl rand -hex 32`) |
+| `AUTH_REFRESH_SECRET`     | deploy         | HMAC-ключ refresh JWT (`openssl rand -hex 32`) |
+| `COOKIE_DOMAIN`           | deploy         | Домен Set-Cookie (`.example.com`) |
+| `DATABASE_URL`            | deploy         | PostgreSQL DSN |
+
+Сгенерировать SSH-ключ:
+```bash
+ssh-keygen -t ed25519 -f deploy_key -N ""
+# deploy_key.pub → добавить на сервер при создании VPS (панель провайдера)
+# deploy_key     → GitHub Secret DEPLOY_SSH_KEY
+```
+
+> **Ограничение:** значения секретов не должны содержать `$` и `\`.
+> Hex-строки (`openssl rand -hex 32`) и стандартные пароли безопасны.
+
+### Альтернатива: запуск setup.sh через GitHub Actions
+
+```
+Actions → Setup VPS → Run workflow
+```
+Поля: `node_ip`, `platform_domain`, `install_postgres`.
+Секреты берутся из GitHub Secrets — ничего не вводится вручную.
+
+### Ручной деплой / rollback
+
+```bash
+cp deployments/envs/prod/prod.vars.example deployments/envs/prod/prod.vars
+# Заполнить prod.vars, указать version = "build-N" или "v1.2.3"
+
+nomad job run -var-file=deployments/envs/prod/prod.vars deployments/infra/nomad/platform.nomad
+nomad job run -var-file=deployments/envs/prod/prod.vars deployments/infra/nomad/xservices.nomad
+```
+
+---
+
+## Масштабирование
+
+Добавление ноды — те же 3 шага что выше. Никаких изменений в конфигах.
+
+`PLATFORM_DOMAIN` DNS-запись с новым IP → NATS и Nomad автоматически обнаруживают ноду.
+
+---
+
+## Ресурсы на ноде
+
+| Компонент     | RAM      |
+|---------------|----------|
+| OS + Kernel   | ~150 MB  |
+| Nomad + NATS  | ~100 MB  |
+| Swap          | авто     |
+| Сервисы       | остаток  |
+
+---
+
+## Firewall (межнодовые порты)
 
 | Порт      | Протокол | Назначение              |
 |-----------|----------|-------------------------|
@@ -75,62 +185,4 @@ systemctl enable --now nomad
 | 4647–4648 | TCP/UDP  | Nomad RPC / Serf gossip |
 | 8080      | TCP      | Gateway (внешний)       |
 
-## CI/CD (GitHub Actions)
-
-Деплой происходит через GitHub Releases — без Docker Registry и без прямого доступа к серверам при деплое.
-
-### Релиз
-
-```bash
-git tag v1.2.3
-git push origin v1.2.3
-```
-
-GitHub Actions (`.github/workflows/release.yml`) автоматически:
-1. Собирает бинарники для `linux/amd64` и `linux/arm64` с `CGO_ENABLED=0`
-2. Упаковывает каждый в `.tar.gz` (сохраняет права на исполнение)
-3. Создаёт GitHub Release с архивами
-
-### Деплой на кластер
-
-Nomad скачивает бинарники прямо из GitHub Releases через блок `artifact` в job-файлах.
-
-```bash
-# Скопировать шаблон и заполнить значениями
-cp deployments/envs/prod/prod.vars.example deployments/envs/prod/prod.vars
-# ... указать github_repo, version, секреты ...
-
-# Задеплоить (Nomad сам скачает нужную версию)
-nomad job run \
-  -var-file=deployments/envs/prod/prod.vars \
-  deployments/infra/nomad/platform.nomad
-
-nomad job run \
-  -var-file=deployments/envs/prod/prod.vars \
-  deployments/infra/nomad/xservices.nomad
-```
-
-Nomad выполняет rolling update: перезапускает по одной аллокации, дожидается `GET /health → 200` перед следующей. Zero downtime.
-
-### Откат
-
-Достаточно указать предыдущий тег в `prod.vars` и перезапустить `nomad job run`.
-
-## Масштабирование
-
-Добавление ноды:
-1. Запустить NATS и Nomad на новом сервере (те же конфиги)
-2. Добавить A-запись `nodes.up.mt` → IP новой ноды
-3. NATS и Nomad автоматически обнаружат новую ноду через DNS
-
-Количество нод не ограничено. `NOMAD_BOOTSTRAP_EXPECT` меняется только при первичном bootstrap кластера.
-
-## Ресурсы на ноде
-
-| Компонент     | RAM      |
-|---------------|----------|
-| OS + Kernel   | 150 MB   |
-| Nomad + NATS  | 100 MB   |
-| Сервисы       | остаток  |
-
-Рекомендуется создать swap-файл как буфер при пиковой нагрузке.
+В production ограничьте порты 4222/6222/4646-4648 диапазоном IP ваших нод.

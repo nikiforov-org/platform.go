@@ -1,0 +1,84 @@
+# .github/workflows/setup.yml
+#
+# Подготовка новой VPS через GitHub Actions.
+# Альтернатива ручному запуску setup.sh — все секреты из GitHub Secrets.
+#
+# Предпочтительный способ: запустить setup.sh прямо на сервере:
+#   wget -qO- https://raw.githubusercontent.com/OWNER/REPO/main/deployments/envs/prod/setup.sh \
+#     | PLATFORM_DOMAIN=nodes.example.com NATS_USER=nats NATS_PASSWORD=secret bash
+#
+# GitHub Secrets, необходимые для этого workflow:
+#   DEPLOY_SSH_KEY   — приватный Ed25519-ключ
+#   DEPLOY_USER      — SSH-пользователь (например: ubuntu)
+#   NATS_USER        — логин NATS-сервера
+#   NATS_PASSWORD    — пароль NATS-сервера
+
+name: Setup VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_ip:
+        description: 'IP новой ноды (публичный, для SSH)'
+        required: true
+      platform_domain:
+        description: 'Домен A-записей кластера (например: nodes.example.com)'
+        required: true
+      install_postgres:
+        description: 'Установить PostgreSQL (true/false)'
+        default: 'false'
+        required: false
+
+jobs:
+  setup:
+    name: Setup ${{ inputs.node_ip }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/setup_key
+          chmod 600 ~/.ssh/setup_key
+
+      # Формируем env-файл с секретами. GitHub маскирует значения в логах.
+      - name: Write setup env
+        env:
+          NATS_USER: ${{ secrets.NATS_USER }}
+          NATS_PASSWORD: ${{ secrets.NATS_PASSWORD }}
+        run: |
+          cat > /tmp/setup_env << EOF
+          PLATFORM_DOMAIN="${{ inputs.platform_domain }}"
+          NATS_USER="${NATS_USER}"
+          NATS_PASSWORD="${NATS_PASSWORD}"
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+          INSTALL_POSTGRES="${{ inputs.install_postgres }}"
+          EOF
+          chmod 600 /tmp/setup_env
+
+      - name: Copy setup files
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          SCP="scp -i ~/.ssh/setup_key -o StrictHostKeyChecking=no"
+          $SCP /tmp/setup_env \
+            deployments/envs/prod/setup.sh \
+            "${DEPLOY_USER}@${{ inputs.node_ip }}:/tmp/"
+
+      - name: Run setup.sh
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          SSH="ssh -i ~/.ssh/setup_key -o StrictHostKeyChecking=no -o BatchMode=yes"
+          $SSH "${DEPLOY_USER}@${{ inputs.node_ip }}" '
+            sudo bash -c "set -a; . /tmp/setup_env; set +a; bash /tmp/setup.sh"
+            rm -f /tmp/setup_env /tmp/setup.sh
+          '
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/setup_key /tmp/setup_env

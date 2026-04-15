@@ -1,4 +1,29 @@
-name: CI
+# .github/workflows/ci.yml
+#
+# CI: сборка + проверка + тесты на каждый push/PR.
+# Deploy: автоматический деплой в production при push в main (только если CI прошёл).
+#
+# Необходимые GitHub Secrets:
+#   DEPLOY_SSH_KEY           — приватный SSH-ключ для подключения к серверу
+#   DEPLOY_USER              — SSH-пользователь (например: ubuntu)
+#   DEPLOY_HOST              — IP или hostname production-сервера
+#
+#   NATS_USER                — логин NATS-сервера
+#   NATS_PASSWORD            — пароль NATS-сервера
+#   ALLOWED_HOSTS            — разрешённые Origin (через запятую)
+#   GATEWAY_AUTH_RATE_PREFIX — URL-префикс жёсткого лимита (например: /v1/xauth/)
+#   GATEWAY_TRUSTED_PROXY    — IP доверенного прокси/LB (Cloudflare и т.п.)
+#
+#   AUTH_USERNAME            — логин xauth
+#   AUTH_PASSWORD            — пароль xauth
+#   AUTH_ACCESS_SECRET       — HMAC-ключ access JWT  (openssl rand -hex 32)
+#   AUTH_REFRESH_SECRET      — HMAC-ключ refresh JWT (openssl rand -hex 32)
+#   COOKIE_DOMAIN            — домен для Set-Cookie (например: .example.com)
+#
+#   DATABASE_URL             — PostgreSQL DSN для xhttp
+#                              (postgres://user:pass@host:5432/db?sslmode=require)
+
+name: CI / Deploy
 
 on:
   push:
@@ -6,7 +31,12 @@ on:
   pull_request:
 
 jobs:
-  build:
+  # ===========================================================================
+  # CI — сборка, линтинг, тесты
+  # Запускается на каждый push и PR.
+  # ===========================================================================
+  ci:
+    name: Build & Test
     runs-on: ubuntu-latest
 
     steps:
@@ -25,3 +55,124 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+  # ===========================================================================
+  # Deploy — сборка релизных бинарников, создание pre-release, SSH-деплой.
+  # Запускается только при push в main после успешного прохождения ci.
+  # ===========================================================================
+  deploy:
+    name: Deploy
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set build version
+        run: echo "VERSION=build-${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      - name: Build release binaries
+        run: |
+          mkdir -p dist
+          for svc in gateway xauth xhttp xws; do
+            for arch in amd64 arm64; do
+              GOOS=linux GOARCH=$arch CGO_ENABLED=0 \
+                go build -trimpath -o dist/$svc ./cmd/$svc
+              chmod +x dist/$svc
+              tar -czf dist/${svc}_linux_${arch}.tar.gz -C dist $svc
+              rm dist/$svc
+            done
+          done
+
+      # Создаём GitHub pre-release с тегом build-N.
+      # Nomad скачивает бинарники из этого релиза через artifact {}.
+      - name: Create pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          prerelease: true
+          files: dist/*.tar.gz
+          generate_release_notes: false
+
+      # Пишем vars-файлы для nomad job run на runner'е (секреты не попадают в логи).
+      # Примечание: значения секретов не должны содержать символы $ и \ —
+      # они не экранируются в heredoc. Пароли из openssl rand -hex 32 безопасны.
+      - name: Write deployment vars
+        env:
+          NATS_USER: ${{ secrets.NATS_USER }}
+          NATS_PASSWORD: ${{ secrets.NATS_PASSWORD }}
+          ALLOWED_HOSTS: ${{ secrets.ALLOWED_HOSTS }}
+          GATEWAY_AUTH_RATE_PREFIX: ${{ secrets.GATEWAY_AUTH_RATE_PREFIX }}
+          GATEWAY_TRUSTED_PROXY: ${{ secrets.GATEWAY_TRUSTED_PROXY }}
+          AUTH_USERNAME: ${{ secrets.AUTH_USERNAME }}
+          AUTH_PASSWORD: ${{ secrets.AUTH_PASSWORD }}
+          AUTH_ACCESS_SECRET: ${{ secrets.AUTH_ACCESS_SECRET }}
+          AUTH_REFRESH_SECRET: ${{ secrets.AUTH_REFRESH_SECRET }}
+          COOKIE_DOMAIN: ${{ secrets.COOKIE_DOMAIN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cat > /tmp/platform.vars << EOF
+          github_repo              = "${{ github.repository }}"
+          version                  = "${{ env.VERSION }}"
+          arch                     = "amd64"
+          nats_user                = "${NATS_USER}"
+          nats_password            = "${NATS_PASSWORD}"
+          allowed_hosts            = "${ALLOWED_HOSTS}"
+          gateway_auth_rate_prefix = "${GATEWAY_AUTH_RATE_PREFIX}"
+          gateway_trusted_proxy    = "${GATEWAY_TRUSTED_PROXY}"
+          log_level                = "info"
+          EOF
+
+          cat > /tmp/xservices.vars << EOF
+          github_repo         = "${{ github.repository }}"
+          version             = "${{ env.VERSION }}"
+          arch                = "amd64"
+          nats_user           = "${NATS_USER}"
+          nats_password       = "${NATS_PASSWORD}"
+          auth_username       = "${AUTH_USERNAME}"
+          auth_password       = "${AUTH_PASSWORD}"
+          auth_access_secret  = "${AUTH_ACCESS_SECRET}"
+          auth_refresh_secret = "${AUTH_REFRESH_SECRET}"
+          cookie_domain       = "${COOKIE_DOMAIN}"
+          database_url        = "${DATABASE_URL}"
+          access_secret       = "${AUTH_ACCESS_SECRET}"
+          log_level           = "info"
+          EOF
+
+      - name: Deploy via SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          echo "$DEPLOY_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          SCP="scp -i /tmp/deploy_key -o StrictHostKeyChecking=no"
+          SSH="ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no -o BatchMode=yes"
+
+          # Копируем vars-файлы на сервер
+          $SCP /tmp/platform.vars /tmp/xservices.vars \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/"
+
+          # Обновляем job-файлы и запускаем деплой.
+          # При первом деплое /opt/platform не существует — клонируем репозиторий.
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+          $SSH "${DEPLOY_USER}@${DEPLOY_HOST}" "
+            set -e
+            if [ -d /opt/platform/.git ]; then
+              git -C /opt/platform pull
+            else
+              git clone '${REPO_URL}' /opt/platform
+            fi
+            nomad job run -var-file=/tmp/platform.vars  /opt/platform/deployments/infra/nomad/platform.nomad
+            nomad job run -var-file=/tmp/xservices.vars /opt/platform/deployments/infra/nomad/xservices.nomad
+            rm -f /tmp/platform.vars /tmp/xservices.vars
+          "
+
+          rm -f /tmp/deploy_key /tmp/platform.vars /tmp/xservices.vars

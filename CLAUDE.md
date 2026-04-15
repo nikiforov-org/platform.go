@@ -124,12 +124,12 @@ All services share `NATS_HOST` (default `127.0.0.1`), `NATS_PORT` (default `4222
 
 Services are deployed via **Nomad with raw exec driver** (no Docker). Each node runs Nomad in hybrid server+client mode.
 
-CI/CD flow (GitHub Releases):
-1. Push a tag `v*` → GitHub Actions (`.github/workflows/release.yml`) builds static binaries for `linux/amd64` and `linux/arm64`, packages each into `.tar.gz`, creates a GitHub Release.
-2. Set `github_repo`, `version`, and secrets in `deployments/envs/prod/prod.vars`.
-3. `nomad job run -var-file=prod.vars deployments/infra/nomad/platform.nomad` — Nomad downloads binaries from the Release via `artifact {}` block and performs rolling update.
+CI/CD flow:
+- **Auto-deploy**: push to `main` → `ci.yml` runs build/vet/test → if pass, builds release binaries, creates GitHub pre-release (`build-N`), SSHes to prod server, runs `git pull` + `nomad job run`. All secrets come from GitHub Secrets (never from files on disk).
+- **Versioned release**: push tag `v*` → `release.yml` creates a stable GitHub Release for manual/rollback deploys.
+- **VPS setup**: single command on the new server — `wget | PLATFORM_DOMAIN=... NATS_USER=... bash`. Script auto-detects IP, configures swap, installs Nomad+NATS, sets up systemd+firewall, auto-joins cluster via DNS. Same command for first node and any subsequent node.
 
-Rollback: change `version` in `prod.vars` and re-run `nomad job run`.
+Rollback: set `version = "build-N"` (or `v1.2.3`) in `prod.vars` and run `nomad job run` manually.
 
 Key Nomad behaviors:
 - `/health` endpoint used by Nomad for self-healing — Gateway returns `200` if NATS is up, `503` otherwise; Nomad restarts on failure

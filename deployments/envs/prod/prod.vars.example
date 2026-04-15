@@ -1,21 +1,24 @@
 # deployments/envs/prod/prod.vars.example
 #
-# Шаблон переменных для production-деплоя.
+# Шаблон переменных для ручного production-деплоя (nomad job run -var-file).
 # Скопируйте в prod.vars, заполните реальными значениями.
 # Не коммитьте prod.vars в репозиторий.
 #
+# При автодеплое через GitHub Actions этот файл не используется —
+# все переменные передаются из GitHub Secrets (см. ci.yml).
+#
 # Использование:
 #   nomad job run \
-#     -var-file=deployments/mode/prod/prod.vars \
-#     deployments/services/nomad/platform.nomad
+#     -var-file=deployments/envs/prod/prod.vars \
+#     deployments/infra/nomad/platform.nomad
 #
 #   nomad job run \
-#     -var-file=deployments/mode/prod/prod.vars \
-#     deployments/services/nomad/xservices.nomad
+#     -var-file=deployments/envs/prod/prod.vars \
+#     deployments/infra/nomad/xservices.nomad
 
 # GitHub Release (откуда Nomad скачивает бинарники)
 github_repo = ""        # owner/repo, например: myorg/platform.go
-version     = ""        # тег релиза, например: v1.2.3
+version     = ""        # тег релиза, например: v1.2.3 или build-42
 arch        = "amd64"   # amd64 или arm64
 
 # NATS
@@ -23,8 +26,9 @@ nats_user     = ""
 nats_password = ""
 
 # Gateway
-allowed_hosts            = ""   # например: "example.com,api.example.com"
+allowed_hosts            = ""                # например: "example.com,api.example.com"
 gateway_auth_rate_prefix = "/v1/xauth/"
+gateway_trusted_proxy    = ""                # IP Cloudflare/LB; пустой — X-Real-IP игнорируется
 log_level                = "info"
 
 # xauth
@@ -38,6 +42,3 @@ cookie_secure       = "true"
 # xhttp
 database_url  = ""   # postgres://user:password@host:5432/db?sslmode=require
 access_secret = ""   # должен совпадать с auth_access_secret
-
-# xws
-inactivity_timeout = "3m"

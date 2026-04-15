@@ -40,6 +40,11 @@ variable "gateway_auth_rate_prefix" {
   default = "/v1/xauth/"
 }
 
+variable "gateway_trusted_proxy" {
+  description = "IP доверенного прокси/LB (Cloudflare, балансировщик). Пустой — X-Real-IP игнорируется."
+  default     = ""
+}
+
 variable "log_level" {
   default = "info"
 }
@@ -98,6 +103,7 @@ job "platform" {
         HTTP_ADDR                = ":8080"
         ALLOWED_HOSTS            = var.allowed_hosts
         GATEWAY_AUTH_RATE_PREFIX = var.gateway_auth_rate_prefix
+        GATEWAY_TRUSTED_PROXY    = var.gateway_trusted_proxy
         LOG_LEVEL                = var.log_level
       }
 
