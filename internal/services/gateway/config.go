@@ -58,6 +58,12 @@ type RateLimitConfig struct {
 	// Если пустой — X-Real-IP из входящего запроса игнорируется, используется
 	// r.RemoteAddr. Задаётся через GATEWAY_TRUSTED_PROXY.
 	TrustedProxy string
+
+	// MaxIPs — максимальное число IP-адресов в каждой таблице rate limiter.
+	// При достижении лимита самая старая запись вытесняется перед добавлением новой.
+	// Ограничивает потребление памяти при DDoS с разных IP.
+	// Задаётся через GATEWAY_RATE_LIMIT_MAX_IPS. По умолчанию 100 000.
+	MaxIPs int
 }
 
 // HTTPConfig — параметры HTTP-сервера шлюза.
@@ -105,8 +111,9 @@ type HTTPConfig struct {
 //	GATEWAY_AUTH_RATE_PREFIX   — URL-префикс для жёсткого лимита         ("")
 //	GATEWAY_AUTH_RATE_LIMIT    — req/s с одного IP для auth-префикса     (5)
 //	GATEWAY_AUTH_RATE_BURST    — burst для auth-префикса                  (10)
-//	GATEWAY_MAX_WS_CONNS       — макс. одновременных WS-соединений        (1000)
-//	GATEWAY_TRUSTED_PROXY      — IP доверенного прокси (Cloudflare, LB)   ("")
+//	GATEWAY_MAX_WS_CONNS         — макс. одновременных WS-соединений        (1000)
+//	GATEWAY_TRUSTED_PROXY        — IP доверенного прокси (Cloudflare, LB)   ("")
+//	GATEWAY_RATE_LIMIT_MAX_IPS   — макс. IP в таблице rate limiter           (100000)
 func LoadConfig() (Config, error) {
 	// ALLOWED_HOSTS читается через os.Getenv, а не utils.GetEnv: значение содержит
 	// запятые — fmt.Sscan остановился бы на первом разделителе.
@@ -143,6 +150,7 @@ func LoadConfig() (Config, error) {
 			AuthBurst:      utils.GetEnv("GATEWAY_AUTH_RATE_BURST", 10),
 			MaxWSConns:     utils.GetEnv("GATEWAY_MAX_WS_CONNS", int64(1000)),
 			TrustedProxy:   utils.GetEnv("GATEWAY_TRUSTED_PROXY", ""),
+			MaxIPs:         utils.GetEnv("GATEWAY_RATE_LIMIT_MAX_IPS", 100_000),
 		},
 	}, nil
 }

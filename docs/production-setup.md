@@ -81,7 +81,7 @@ openssl rand -hex 32   # → AUTH_REFRESH_SECRET
 | `COOKIE_DOMAIN` | Домен для Set-Cookie | `.example.com` |
 | `DATABASE_URL` | PostgreSQL DSN | `postgres://user:pass@host:5432/db?sslmode=require` |
 
-> Значения секретов могут содержать любые символы включая `$`, `\` и `"`.
+> Значения секретов могут содержать любые символы — ограничений нет.
 
 ---
 

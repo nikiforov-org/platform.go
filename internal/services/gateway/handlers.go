@@ -47,18 +47,29 @@ type Gateway struct {
 	cfg          Config
 	rl           *rl
 	log          zerolog.Logger
+	// ctx отменяется при штатном завершении Gateway (закрытии stop-канала).
+	// WS-обработчики наследуются от него — shutdown корректно прерывает все сессии.
+	ctx context.Context
 }
 
 // New создаёт Gateway с переданными зависимостями.
-// stop закрывается при штатном завершении — освобождает фоновую горутину rate limiter.
+// stop закрывается при штатном завершении — освобождает rate limiter и отменяет
+// все активные WS-сессии через gw.ctx.
 // CheckOrigin делегируется allowedHosts — HTTP и WebSocket используют одно правило.
 func New(natsClient *nc.PlatformClient, cfg Config, log zerolog.Logger, stop <-chan struct{}) *Gateway {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-stop
+		cancel()
+	}()
+
 	gw := &Gateway{
 		nats:         natsClient,
 		allowedHosts: cfg.AllowedHosts,
 		cfg:          cfg,
 		rl:           newRateLimiter(cfg.RateLimit, log, stop),
 		log:          log,
+		ctx:          ctx,
 	}
 	gw.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
@@ -278,7 +289,8 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 	}
 	sessionID := fmt.Sprintf("%x", sidRaw)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Наследуемся от gw.ctx: при shutdown сервера все WS-сессии отменяются.
+	ctx, cancel := context.WithCancel(gw.ctx)
 	defer cancel()
 
 	// mu защищает все записи в conn от гонки между горутиной Ping и NATS-коллбэком.
@@ -344,6 +356,20 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 			case <-ctx.Done():
 				return
 			}
+		}
+	}()
+
+	// Горутина shutdown: при завершении сервера отправляет клиенту close-фрейм
+	// и прерывает блокирующий ReadMessage через SetReadDeadline(now).
+	// Без этого ReadMessage ждал бы до wsReadDeadline (60s), блокируя server.Shutdown.
+	go func() {
+		select {
+		case <-gw.ctx.Done():
+			safeWrite(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseGoingAway, "server restarting"))
+			conn.SetReadDeadline(time.Now())
+		case <-ctx.Done():
+			// Сессия завершилась раньше shutdown — горутина не нужна.
 		}
 	}()
 

@@ -9,6 +9,8 @@
 //
 // Алгоритм: Token Bucket (golang.org/x/time/rate).
 // IP-таблица очищается раз в минуту: записи, не активные более 5 минут, удаляются.
+// Размер таблицы ограничен GATEWAY_RATE_LIMIT_MAX_IPS (по умолчанию 100 000):
+// при заполнении самая старая запись вытесняется перед добавлением новой.
 package gateway
 
 import (
@@ -65,17 +67,37 @@ func (r *rl) allowAuth(ip string) bool {
 }
 
 // get возвращает limiter для IP, создавая его при первом обращении.
+// Если таблица достигла MaxIPs — перед добавлением вытесняется самая старая запись.
 func (r *rl) get(table map[string]*ipEntry, ip string, ratePerSec float64, burst int) *rate.Limiter {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	e, ok := table[ip]
 	if !ok {
+		if len(table) >= r.cfg.MaxIPs {
+			r.evictOldest(table)
+		}
 		e = &ipEntry{limiter: rate.NewLimiter(rate.Limit(ratePerSec), burst)}
 		table[ip] = e
 	}
 	e.lastSeen = time.Now()
 	return e.limiter
+}
+
+// evictOldest удаляет запись с наиболее давним lastSeen из таблицы.
+// Вызывается только когда таблица достигла MaxIPs; вызывающий держит mu.
+func (r *rl) evictOldest(table map[string]*ipEntry) {
+	var oldestIP string
+	var oldestTime time.Time
+	for ip, e := range table {
+		if oldestIP == "" || e.lastSeen.Before(oldestTime) {
+			oldestIP = ip
+			oldestTime = e.lastSeen
+		}
+	}
+	if oldestIP != "" {
+		delete(table, oldestIP)
+	}
 }
 
 // cleanup удаляет неактивные записи каждую минуту.
