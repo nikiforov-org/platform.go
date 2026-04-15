@@ -24,11 +24,14 @@ func Recover(log zerolog.Logger, next nats.MsgHandler) nats.MsgHandler {
 	return func(msg *nats.Msg) {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error().
+				event := log.Error().
 					Str("subject", msg.Subject).
 					Interface("panic", r).
-					Bytes("stack", debug.Stack()).
-					Msg("паника в обработчике")
+					Bytes("stack", debug.Stack())
+				if reqID := msg.Header.Get("X-Request-Id"); reqID != "" {
+					event = event.Str("req", reqID)
+				}
+				event.Msg("паника в обработчике")
 
 				if msg.Reply == "" {
 					return

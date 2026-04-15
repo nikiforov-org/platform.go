@@ -182,22 +182,33 @@ func (gw *Gateway) route(w http.ResponseWriter, r *http.Request) {
 //   - Set-Cookie — добавляется через Add, а не Set: каждая кука — отдельная строка.
 //   - Остальные — копируются первым значением через Set.
 func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service string, methodParts []string) {
+	reqID := newRequestID()
 	method := strings.Join(methodParts, ".")
 	subject := fmt.Sprintf("api.v1.%s.%s", service, method)
+	ip := realIP(r, gw.cfg.RateLimit.TrustedProxy)
+	start := time.Now()
+
+	gw.log.Info().
+		Str("req", reqID).
+		Str("method", r.Method).
+		Str("path", r.URL.Path).
+		Str("ip", ip).
+		Msg("→")
 
 	// Ограничиваем чтение тела 1 МБ для защиты от злоупотреблений.
 	const maxBodySize = 1 << 20 // 1 MB
 	defer r.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
 	if err != nil {
-		gw.log.Error().Err(err).Str("subject", subject).Msg("ошибка чтения тела запроса")
+		gw.log.Error().Err(err).Str("req", reqID).Str("subject", subject).Msg("ошибка чтения тела запроса")
 		http.Error(w, "failed to read request body", http.StatusBadRequest)
 		return
 	}
 
 	msg := nats.NewMsg(subject)
 	msg.Data = body
-	msg.Header.Set("X-Real-IP", r.RemoteAddr)
+	msg.Header.Set("X-Real-IP", ip)
+	msg.Header.Set("X-Request-Id", reqID)
 
 	if auth := r.Header.Get("Authorization"); auth != "" {
 		msg.Header.Set("Authorization", auth)
@@ -208,7 +219,7 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 
 	resp, err := gw.nats.Conn.RequestMsg(msg, 5*time.Second)
 	if err != nil {
-		gw.log.Error().Err(err).Str("subject", subject).Msg("NATS request error")
+		gw.log.Error().Err(err).Str("req", reqID).Str("subject", subject).Msg("NATS request error")
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -234,11 +245,39 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 		}
 	}
 
+	// Возвращаем request ID клиенту — полезно для поддержки и отладки.
+	w.Header().Set("X-Request-Id", reqID)
 	w.WriteHeader(statusCode)
 
 	if _, err := w.Write(resp.Data); err != nil {
-		gw.log.Error().Err(err).Str("subject", subject).Msg("ошибка записи ответа")
+		gw.log.Error().Err(err).Str("req", reqID).Str("subject", subject).Msg("ошибка записи ответа")
+		return
 	}
+
+	gw.log.Info().
+		Str("req", reqID).
+		Str("subject", subject).
+		Int("status", statusCode).
+		Dur("ms", time.Since(start)).
+		Msg("←")
+}
+
+// isTimeoutError возвращает true если ошибка — превышение дедлайна на чтение.
+func isTimeoutError(err error) bool {
+	if ne, ok := err.(interface{ Timeout() bool }); ok {
+		return ne.Timeout()
+	}
+	return false
+}
+
+// newRequestID генерирует уникальный идентификатор запроса (8 байт = 16 hex-символов).
+// Используется для сквозной трассировки: Gateway → NATS-заголовок → лог сервиса.
+func newRequestID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "unknown"
+	}
+	return fmt.Sprintf("%x", b)
 }
 
 // parseStatus разбирает строку HTTP-статуса ("200", "404" и т.д.) в int.
@@ -388,7 +427,15 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 
 		_, data, err := conn.ReadMessage()
 		if err != nil {
-			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+			switch {
+			case websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway):
+				// Клиент закрыл соединение штатно.
+			case isTimeoutError(err):
+				// Клиент не прислал данные или Pong за wsReadDeadline — считаем мёртвым.
+				gw.log.Info().Str("sid", sessionID).Msg("WS session timed out")
+				safeWrite(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "inactivity timeout"))
+			default:
 				gw.log.Error().Err(err).Str("sid", sessionID).Msg("WS read error")
 			}
 			return
