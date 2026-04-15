@@ -317,7 +317,6 @@ job "xservices" {
         NATS_PORT          = "4222"
         NATS_USER          = "${v[nats_user]}"
         NATS_PASSWORD      = "${v[nats_password]}"
-        ACCESS_SECRET      = "${v[access_secret]}"
         INACTIVITY_TIMEOUT = "${v[inactivity_timeout]:-3m}"
         LOG_LEVEL          = "${v[log_level]}"
       }
@@ -393,7 +392,11 @@ fi
 NODES="$CMD"
 
 check_deps
-rm -f "$PID_FILE"
+
+if [[ -f "$PID_FILE" ]]; then
+  warn "Обнаружено запущенное окружение. Останавливаю перед повторным запуском..."
+  stop_all
+fi
 
 start_infra "$NODES"
 build_binaries

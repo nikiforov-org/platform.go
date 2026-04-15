@@ -1,4 +1,4 @@
-# deployments/mode/prod/prod.vars.example
+# deployments/envs/prod/prod.vars.example
 #
 # Шаблон переменных для production-деплоя.
 # Скопируйте в prod.vars, заполните реальными значениями.

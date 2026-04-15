@@ -234,7 +234,6 @@ job "xservices" {
         NATS_PORT          = "4222"
         NATS_USER          = var.nats_user
         NATS_PASSWORD      = var.nats_password
-        ACCESS_SECRET      = var.access_secret
         INACTIVITY_TIMEOUT = var.inactivity_timeout
         LOG_LEVEL          = var.log_level
       }

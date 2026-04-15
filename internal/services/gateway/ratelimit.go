@@ -120,7 +120,7 @@ func (r *rl) cleanup(stop <-chan struct{}) {
 // /health не входит в цепочку и не ограничивается.
 func (gw *Gateway) middlewareRateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := realIP(r)
+		ip := realIP(r, gw.cfg.RateLimit.TrustedProxy)
 
 		// Дополнительный жёсткий лимит для настраиваемого префикса — защита от брутфорса.
 		if p := gw.cfg.RateLimit.AuthPathPrefix; p != "" && strings.HasPrefix(r.URL.Path, p) {
@@ -157,11 +157,16 @@ func (gw *Gateway) wsConnGuard() (ok bool, release func()) {
 }
 
 // realIP извлекает реальный IP клиента.
-// Доверяет заголовку X-Real-IP, который Gateway сам же проставляет в NATS-сообщения.
-// В prod X-Real-IP выставляет Cloudflare/балансировщик перед Gateway.
-func realIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
+// X-Real-IP принимается только если запрос пришёл с trustedProxy (Cloudflare, LB).
+// Если trustedProxy пустой или RemoteAddr не совпадает — используется r.RemoteAddr.
+func realIP(r *http.Request, trustedProxy string) string {
+	if trustedProxy != "" {
+		remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if remoteIP == trustedProxy {
+			if ip := r.Header.Get("X-Real-IP"); ip != "" {
+				return ip
+			}
+		}
 	}
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

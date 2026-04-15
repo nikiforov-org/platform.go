@@ -134,7 +134,9 @@ func (h *Handlers) HandleLogout(msg *nats.Msg) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			// Отзываем JTI — даже если токен ещё не истёк, /refresh его не примет.
-			_ = h.nc.PutValue(ctx, h.cfg.NATS.KV.BucketName, c.Jti, []byte("revoked"))
+			if err := h.nc.PutValue(ctx, h.cfg.NATS.KV.BucketName, c.Jti, []byte("revoked")); err != nil {
+				h.log.Warn().Err(err).Str("jti", c.Jti).Msg("не удалось отозвать refresh-токен в KV")
+			}
 		}
 	}
 

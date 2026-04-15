@@ -170,18 +170,19 @@ KV использовать только для кэша, сессий и вре
 │   └── cookie.go                     # Парсинг и сборка Set-Cookie заголовков
 │
 ├── deployments/
-│   ├── services/                     # Описания сервисов — конфиги и job-файлы
+│   ├── infra/                        # Конфиги сервисов, не зависящие от окружения
 │   │   ├── nats/
 │   │   │   └── nats.conf             # NATS-кластер: DNS Discovery, JetStream, auth
 │   │   └── nomad/
 │   │       ├── nomad.hcl             # Nomad-агент: hybrid server+client, raw_exec
 │   │       ├── platform.nomad        # Джоб Gateway (платформа)
 │   │       └── xservices.nomad       # Джоб демо-сервисов (xauth, xhttp, xws)
-│   └── mode/                         # Окружения и управление запуском
+│   └── envs/                         # Окружения и управление запуском
 │       ├── dev/
 │       │   ├── docker-compose.yml    # NATS-кластер + PostgreSQL для локальной разработки
 │       │   ├── nats.conf             # NATS-конфиг для Docker (Docker DNS routing)
 │       │   ├── dev.vars              # Переменные для nomad job run в dev
+│       │   ├── start.sh              # Скрипт запуска dev-окружения (N нод)
 │       │   └── dev.md                # Инструкция по локальному запуску с Nomad
 │       └── prod/
 │           ├── prod.vars.example     # Шаблон переменных для production
@@ -215,9 +216,9 @@ KV использовать только для кэша, сессий и вре
 
 Конфигурационные файлы для инфраструктуры. Не содержит Go-кода.
 
-- `services/` — шаблоны и описания сервисов, не зависящие от окружения (NATS-конфиг, Nomad job-файлы с переменными).
-- `mode/dev/` — всё для локальной разработки: Docker Compose, dev-переменные, инструкции.
-- `mode/prod/` — шаблон prod-переменных и инструкции по production-деплою.
+- `infra/` — конфиги сервисов, не зависящие от окружения (NATS-конфиг, Nomad job-файлы с переменными).
+- `envs/dev/` — всё для локальной разработки: Docker Compose, dev-переменные, скрипт запуска, инструкции.
+- `envs/prod/` — шаблон prod-переменных и инструкции по production-деплою.
 
 **Именование демо-сервисов**
 

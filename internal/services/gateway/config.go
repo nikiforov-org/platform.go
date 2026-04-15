@@ -52,6 +52,12 @@ type RateLimitConfig struct {
 	// MaxWSConns — максимальное число одновременных WebSocket-соединений.
 	// При превышении Gateway возвращает 503.
 	MaxWSConns int64
+
+	// TrustedProxy — IP доверенного обратного прокси (Cloudflare, LB).
+	// Если задан, заголовок X-Real-IP принимается только от этого IP.
+	// Если пустой — X-Real-IP из входящего запроса игнорируется, используется
+	// r.RemoteAddr. Задаётся через GATEWAY_TRUSTED_PROXY.
+	TrustedProxy string
 }
 
 // HTTPConfig — параметры HTTP-сервера шлюза.
@@ -100,6 +106,7 @@ type HTTPConfig struct {
 //	GATEWAY_AUTH_RATE_LIMIT    — req/s с одного IP для auth-префикса     (5)
 //	GATEWAY_AUTH_RATE_BURST    — burst для auth-префикса                  (10)
 //	GATEWAY_MAX_WS_CONNS       — макс. одновременных WS-соединений        (1000)
+//	GATEWAY_TRUSTED_PROXY      — IP доверенного прокси (Cloudflare, LB)   ("")
 func LoadConfig() (Config, error) {
 	// ALLOWED_HOSTS читается через os.Getenv, а не utils.GetEnv: значение содержит
 	// запятые — fmt.Sscan остановился бы на первом разделителе.
@@ -135,6 +142,7 @@ func LoadConfig() (Config, error) {
 			AuthRate:       utils.GetEnv("GATEWAY_AUTH_RATE_LIMIT", 5.0),
 			AuthBurst:      utils.GetEnv("GATEWAY_AUTH_RATE_BURST", 10),
 			MaxWSConns:     utils.GetEnv("GATEWAY_MAX_WS_CONNS", int64(1000)),
+			TrustedProxy:   utils.GetEnv("GATEWAY_TRUSTED_PROXY", ""),
 		},
 	}, nil
 }
