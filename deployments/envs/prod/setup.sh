@@ -7,18 +7,20 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Использование (wget):
 #   wget -qO- https://raw.githubusercontent.com/OWNER/REPO/main/deployments/envs/prod/setup.sh \
-#     | PLATFORM_DOMAIN=nodes.example.com NATS_USER=nats NATS_PASSWORD=secret bash
-#
-# Использование (curl):
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/deployments/envs/prod/setup.sh \
-#     | PLATFORM_DOMAIN=nodes.example.com NATS_USER=nats NATS_PASSWORD=secret bash
+#     | PLATFORM_DOMAIN=nodes.example.com \
+#       NATS_USER=nats \
+#       NATS_PASSWORD=secret \
+#       NATS_CA_KEY="$(base64 -w0 < nats-ca.key)" \
+#       NATS_CA_CERT="$(base64 -w0 < nats-ca.crt)" \
+#       bash
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Обязательные переменные:
-#   PLATFORM_DOMAIN  — домен A-записей кластера (все ноды)
-#                      например: nodes.example.com
+#   PLATFORM_DOMAIN  — домен A-записей кластера (все ноды), например: nodes.example.com
 #   NATS_USER        — логин NATS-сервера
 #   NATS_PASSWORD    — пароль NATS-сервера
+#   NATS_CA_KEY      — приватный ключ CA в base64 (base64 -w0 < nats-ca.key)
+#   NATS_CA_CERT     — сертификат CA в base64   (base64 -w0 < nats-ca.crt)
 #
 # Необязательные:
 #   NATS_VERSION     — версия NATS Server    (по умолчанию: 2.10.22)
@@ -32,6 +34,14 @@ set -euo pipefail
 : "${PLATFORM_DOMAIN:?Обязательная переменная: PLATFORM_DOMAIN}"
 : "${NATS_USER:?Обязательная переменная: NATS_USER}"
 : "${NATS_PASSWORD:?Обязательная переменная: NATS_PASSWORD}"
+: "${NATS_CA_KEY:?Обязательная переменная: NATS_CA_KEY (base64 приватного ключа CA)}"
+: "${NATS_CA_CERT:?Обязательная переменная: NATS_CA_CERT (base64 сертификата CA)}"
+: "${NOMAD_TOKEN:?Обязательная переменная: NOMAD_TOKEN (UUID для Nomad ACL)}"
+
+# PEM-ключи передаются через base64 чтобы не ломать env-файл многострочным содержимым.
+# Декодируем один раз здесь; дальше используем как обычные переменные.
+NATS_CA_KEY=$(printf '%s' "$NATS_CA_KEY" | base64 -d)
+NATS_CA_CERT=$(printf '%s' "$NATS_CA_CERT" | base64 -d)
 
 NATS_VERSION="${NATS_VERSION:-2.10.22}"
 REPO_URL="${REPO_URL:-}"
@@ -203,6 +213,10 @@ telemetry {
   publish_allocation_metrics = true
   publish_node_metrics       = true
 }
+
+acl {
+  enabled = true
+}
 HCL
 
   # Env-файл для systemd (chmod 600 — только root)
@@ -259,6 +273,65 @@ install_nats() {
   info "Установлен: $(nats-server --version)"
 }
 
+# =============================================================================
+# TLS-сертификаты NATS
+#
+# CA-ключ (NATS_CA_KEY) получается из env, используется только для подписи
+# сертификата этой ноды и сразу удаляется. На сервере остаётся только:
+#   /etc/nats/ca.crt   — публичный сертификат CA (для проверки других нод)
+#   /etc/nats/node.crt — сертификат этой ноды (подписан CA)
+#   /etc/nats/node.key — приватный ключ ноды (chmod 600, owner nats)
+# =============================================================================
+generate_nats_certs() {
+  log "Генерация TLS-сертификатов NATS..."
+
+  command -v openssl >/dev/null || apt-get install -y -q openssl
+
+  # CA cert — публичный, нужен для проверки сертификатов других нод
+  printf '%s\n' "$NATS_CA_CERT" > "$NATS_CONF_DIR/ca.crt"
+  chmod 644 "$NATS_CONF_DIR/ca.crt"
+
+  # CA key — только для подписи, удаляем сразу после
+  printf '%s\n' "$NATS_CA_KEY" > /tmp/nats-ca.key
+  chmod 600 /tmp/nats-ca.key
+
+  # Ключ ноды
+  openssl genrsa -out "$NATS_CONF_DIR/node.key" 2048 2>/dev/null
+  chmod 600 "$NATS_CONF_DIR/node.key"
+
+  # CSR
+  openssl req -new \
+    -key "$NATS_CONF_DIR/node.key" \
+    -out /tmp/nats-node.csr \
+    -subj "/CN=nats-${NODE_IP}/O=platform" \
+    2>/dev/null
+
+  # SAN: IP ноды + localhost (для локальных health-check'ов)
+  printf 'subjectAltName=IP:%s,IP:127.0.0.1\n' "$NODE_IP" > /tmp/nats-node-san.cnf
+
+  # Подписываем сертификат ноды CA-ключом (10 лет)
+  openssl x509 -req \
+    -in /tmp/nats-node.csr \
+    -CA "$NATS_CONF_DIR/ca.crt" \
+    -CAkey /tmp/nats-ca.key \
+    -CAcreateserial \
+    -out "$NATS_CONF_DIR/node.crt" \
+    -days 3650 \
+    -extfile /tmp/nats-node-san.cnf \
+    2>/dev/null
+
+  chmod 644 "$NATS_CONF_DIR/node.crt"
+
+  # CA key немедленно удаляется с сервера
+  rm -f /tmp/nats-ca.key /tmp/nats-node.csr /tmp/nats-node-san.cnf /tmp/nats-ca.srl
+
+  chown nats:nats "$NATS_CONF_DIR/ca.crt" "$NATS_CONF_DIR/node.crt" "$NATS_CONF_DIR/node.key"
+
+  local expires
+  expires=$(openssl x509 -noout -enddate -in "$NATS_CONF_DIR/node.crt" | cut -d= -f2)
+  info "Сертификат ноды действителен до: $expires"
+}
+
 setup_nats() {
   log "Настройка NATS..."
 
@@ -283,6 +356,16 @@ cluster {
   routes: ["nats-route://$PLATFORM_DOMAIN:6222"]
 
   cluster_advertise: $NODE_IP
+
+  # mTLS для кластерного трафика между нодами (разные DC/провайдеры).
+  # CA-ключ не хранится на сервере — только cert + key ноды.
+  tls {
+    cert_file: "/etc/nats/node.crt"
+    key_file:  "/etc/nats/node.key"
+    ca_file:   "/etc/nats/ca.crt"
+    verify:    true
+    timeout:   5
+  }
 }
 
 jetstream {
@@ -383,6 +466,32 @@ start_services() {
 }
 
 # =============================================================================
+# Nomad ACL bootstrap
+#
+# NOMAD_TOKEN — UUID, сгенерированный заранее и положенный в GitHub Secrets.
+# Передаётся в Nomad через HTTP API как BootstrapSecret.
+# На первой ноде: Nomad принимает токен и активирует ACL.
+# На последующих: запрос вернёт ошибку "bootstrap already done" — игнорируем.
+# =============================================================================
+bootstrap_acl() {
+  log "Настройка Nomad ACL..."
+
+  # Ждём готовности Nomad API
+  local elapsed=0
+  until curl -sf --max-time 2 "http://127.0.0.1:4646/v1/status/leader" &>/dev/null; do
+    sleep 2; elapsed=$((elapsed + 2))
+    [[ $elapsed -lt 30 ]] || die "Nomad API не отвечает за 30s"
+  done
+
+  # Отправляем bootstrap-токен. Nomad принимает его только один раз —
+  # при повторном вызове (на нодах 2+) молча возвращает ошибку, которую игнорируем.
+  curl -sf -X POST "http://127.0.0.1:4646/v1/acl/bootstrap" \
+    -d "{\"BootstrapSecret\": \"${NOMAD_TOKEN}\"}" &>/dev/null || true
+
+  info "ACL настроен"
+}
+
+# =============================================================================
 # Итог
 # =============================================================================
 print_summary() {
@@ -406,7 +515,9 @@ install_nomad
 install_nats
 clone_repo
 setup_nomad
+generate_nats_certs
 setup_nats
 setup_firewall
 start_services
+bootstrap_acl
 print_summary

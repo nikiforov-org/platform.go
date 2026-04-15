@@ -24,6 +24,11 @@ advertise {
 
 server {
   enabled          = true
+
+  # bootstrap_expect = 1 на каждой ноде — поддерживаемый Nomad Autopilot паттерн.
+  # Каждая нода самостоятельно бутстрапится, затем retry_join объединяет их
+  # в единый кластер через Raft-консенсус (лидер выбирается автоматически).
+  # Ноды можно добавлять в любом порядке и в любое время.
   bootstrap_expect = 1
 
   job_gc_threshold        = "4h"
@@ -63,4 +68,11 @@ ports {
 telemetry {
   publish_allocation_metrics = true
   publish_node_metrics       = true
+}
+
+# ACL включён: все операции с API требуют токена.
+# Bootstrap-токен генерируется при первом запуске setup.sh и сохраняется
+# в GitHub Secrets как NOMAD_TOKEN.
+acl {
+  enabled = true
 }

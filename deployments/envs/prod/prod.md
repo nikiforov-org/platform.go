@@ -113,9 +113,11 @@ Versioned-релизы создаются по тегу `v*` (`release.yml`) —
 |---------------------------|----------------|----------|
 | `DEPLOY_SSH_KEY`          | setup, deploy  | Приватный Ed25519-ключ |
 | `DEPLOY_USER`             | setup, deploy  | SSH-пользователь (`ubuntu`) |
-| `DEPLOY_HOST`             | deploy         | IP или hostname primary-ноды |
+| `PLATFORM_DOMAIN`         | setup, deploy  | Домен A-записей кластера (`nodes.example.com`). CI резолвит все A-записи и перебирает ноды — нет единой точки отказа. |
 | `NATS_USER`               | setup, deploy  | Логин NATS |
 | `NATS_PASSWORD`           | setup, deploy  | Пароль NATS |
+| `NATS_CA_KEY`             | setup          | CA приватный ключ в base64 (`base64 -w0 < nats-ca.key`) |
+| `NATS_CA_CERT`            | setup          | CA сертификат в base64 (`base64 -w0 < nats-ca.crt`) |
 | `ALLOWED_HOSTS`           | deploy         | Разрешённые Origin (`example.com,api.example.com`) |
 | `GATEWAY_AUTH_RATE_PREFIX`| deploy         | URL-префикс жёсткого rate limit (`/v1/xauth/`) |
 | `GATEWAY_TRUSTED_PROXY`   | deploy         | IP LB для X-Real-IP (пусто при DNS round-robin) |
@@ -125,6 +127,36 @@ Versioned-релизы создаются по тегу `v*` (`release.yml`) —
 | `AUTH_REFRESH_SECRET`     | deploy         | HMAC-ключ refresh JWT (`openssl rand -hex 32`) |
 | `COOKIE_DOMAIN`           | deploy         | Домен Set-Cookie (`.example.com`) |
 | `DATABASE_URL`            | deploy         | PostgreSQL DSN |
+| `NOMAD_TOKEN`             | deploy         | Nomad ACL bootstrap-токен — UUID (`uuidgen`), задаётся один раз |
+
+### GitHub Variables (необязательные)
+
+Задаются в `Settings → Secrets and variables → Actions → Variables`. Не маскируются в логах.
+Если не заданы — используются дефолтные значения.
+
+| Variable | По умолчанию | Описание |
+|----------|--------------|----------|
+| `COOKIE_SECURE` | `true` | `false` только при HTTP-разработке без HTTPS |
+| `AUTH_ACCESS_TTL` | `15m` | Время жизни access JWT |
+| `AUTH_REFRESH_TTL` | `168h` | Время жизни refresh JWT (7 дней) |
+| `INACTIVITY_TIMEOUT` | `3m` | Таймаут неактивной WebSocket-сессии |
+| `CACHE_TTL` | `30s` | TTL NATS KV кэша в xhttp |
+
+Сгенерировать CA для NATS TLS (один раз, локально):
+```bash
+openssl genrsa -out nats-ca.key 4096
+openssl req -new -x509 -key nats-ca.key -out nats-ca.crt -days 3650 \
+  -subj "/CN=platform-nats-ca/O=platform"
+
+# Добавить в GitHub Secrets:
+# NATS_CA_KEY  = $(base64 -w0 < nats-ca.key)
+# NATS_CA_CERT = $(base64 -w0 < nats-ca.crt)
+
+# Удалить локальные файлы после добавления в Secrets!
+rm nats-ca.key nats-ca.crt
+```
+
+CA-ключ нигде не хранится: setup.sh использует его только для подписи сертификата ноды и немедленно удаляет.
 
 Сгенерировать SSH-ключ:
 ```bash
@@ -133,8 +165,7 @@ ssh-keygen -t ed25519 -f deploy_key -N ""
 # deploy_key     → GitHub Secret DEPLOY_SSH_KEY
 ```
 
-> **Ограничение:** значения секретов не должны содержать `$` и `\`.
-> Hex-строки (`openssl rand -hex 32`) и стандартные пароли безопасны.
+> Значения секретов могут содержать любые символы включая `$`, `\` и `"`.
 
 ### Альтернатива: запуск setup.sh через GitHub Actions
 

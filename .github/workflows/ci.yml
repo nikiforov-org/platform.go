@@ -6,7 +6,9 @@
 # Необходимые GitHub Secrets:
 #   DEPLOY_SSH_KEY           — приватный SSH-ключ для подключения к серверу
 #   DEPLOY_USER              — SSH-пользователь (например: ubuntu)
-#   DEPLOY_HOST              — IP или hostname production-сервера
+#   PLATFORM_DOMAIN          — домен A-записей кластера (например: nodes.example.com)
+#                              CI резолвит все A-записи и перебирает ноды по порядку.
+#                              Добавил ноду в DNS — она автоматически участвует в деплое.
 #
 #   NATS_USER                — логин NATS-сервера
 #   NATS_PASSWORD            — пароль NATS-сервера
@@ -22,6 +24,13 @@
 #
 #   DATABASE_URL             — PostgreSQL DSN для xhttp
 #                              (postgres://user:pass@host:5432/db?sslmode=require)
+#
+# Необязательные GitHub Variables (Settings → Variables, не Secrets):
+#   COOKIE_SECURE        — true/false, по умолчанию true (false только для HTTP-разработки)
+#   AUTH_ACCESS_TTL      — время жизни access JWT, по умолчанию 15m
+#   AUTH_REFRESH_TTL     — время жизни refresh JWT, по умолчанию 168h
+#   INACTIVITY_TIMEOUT   — таймаут WebSocket-сессии, по умолчанию 3m
+#   CACHE_TTL            — TTL кэша xhttp, по умолчанию 30s
 
 name: CI / Deploy
 
@@ -100,9 +109,22 @@ jobs:
           files: dist/*.tar.gz
           generate_release_notes: false
 
+      # Удаляем старые pre-release'ы build-*, оставляем последние 10.
+      # Стабильные релизы (v*) не трогаем.
+      - name: Cleanup old pre-releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          KEEP=5
+          # Берём только pre-release'ы с тегом build-*, сортируем по дате (новые первые)
+          gh release list --repo "${{ github.repository }}" --limit 100 --json tagName,isPrerelease,createdAt \
+            | jq -r '.[] | select(.isPrerelease and (.tagName | startswith("build-"))) | .tagName' \
+            | tail -n +$(( KEEP + 1 )) \
+            | xargs -r -I {} sh -c 'echo "Deleting {}..." && gh release delete {} --repo "${{ github.repository }}" --yes --cleanup-tag'
+
       # Пишем vars-файлы для nomad job run на runner'е (секреты не попадают в логи).
-      # Примечание: значения секретов не должны содержать символы $ и \ —
-      # они не экранируются в heredoc. Пароли из openssl rand -hex 32 безопасны.
+      # printf '%s' безопасен для любых значений включая $ и \ — в отличие от heredoc.
+      # Единственный неподдерживаемый символ в значениях: " (ломает HCL-строку).
       - name: Write deployment vars
         env:
           NATS_USER: ${{ secrets.NATS_USER }}
@@ -117,62 +139,110 @@ jobs:
           COOKIE_DOMAIN: ${{ secrets.COOKIE_DOMAIN }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          cat > /tmp/platform.vars << EOF
-          github_repo              = "${{ github.repository }}"
-          version                  = "${{ env.VERSION }}"
-          arch                     = "amd64"
-          nats_user                = "${NATS_USER}"
-          nats_password            = "${NATS_PASSWORD}"
-          allowed_hosts            = "${ALLOWED_HOSTS}"
-          gateway_auth_rate_prefix = "${GATEWAY_AUTH_RATE_PREFIX}"
-          gateway_trusted_proxy    = "${GATEWAY_TRUSTED_PROXY}"
-          log_level                = "info"
-          EOF
+          # arch не задаётся здесь — определяется на каждой ноде через uname -m.
+          # Это позволяет деплоить в смешанный кластер (amd64 + arm64) без ручной конфигурации.
 
-          cat > /tmp/xservices.vars << EOF
-          github_repo         = "${{ github.repository }}"
-          version             = "${{ env.VERSION }}"
-          arch                = "amd64"
-          nats_user           = "${NATS_USER}"
-          nats_password       = "${NATS_PASSWORD}"
-          auth_username       = "${AUTH_USERNAME}"
-          auth_password       = "${AUTH_PASSWORD}"
-          auth_access_secret  = "${AUTH_ACCESS_SECRET}"
-          auth_refresh_secret = "${AUTH_REFRESH_SECRET}"
-          cookie_domain       = "${COOKIE_DOMAIN}"
-          database_url        = "${DATABASE_URL}"
-          access_secret       = "${AUTH_ACCESS_SECRET}"
-          log_level           = "info"
-          EOF
+          # hcl() экранирует " → \" чтобы значение безопасно встало в HCL-строку.
+          # printf '%s' не интерпретирует $ и \ — все спецсимволы проходят как есть.
+          hcl() { printf '%s' "$1" | sed 's/"/\\"/g'; }
+
+          {
+            printf 'github_repo              = "%s"\n' "${{ github.repository }}"
+            printf 'version                  = "%s"\n' "${{ env.VERSION }}"
+            printf 'nats_user                = "%s"\n' "$(hcl "$NATS_USER")"
+            printf 'nats_password            = "%s"\n' "$(hcl "$NATS_PASSWORD")"
+            printf 'allowed_hosts            = "%s"\n' "$(hcl "$ALLOWED_HOSTS")"
+            printf 'gateway_auth_rate_prefix = "%s"\n' "$(hcl "$GATEWAY_AUTH_RATE_PREFIX")"
+            printf 'gateway_trusted_proxy    = "%s"\n' "$(hcl "$GATEWAY_TRUSTED_PROXY")"
+            printf 'log_level                = "info"\n'
+          } > /tmp/platform.vars
+          chmod 600 /tmp/platform.vars
+
+          {
+            printf 'github_repo         = "%s"\n' "${{ github.repository }}"
+            printf 'version             = "%s"\n' "${{ env.VERSION }}"
+            printf 'nats_user           = "%s"\n' "$(hcl "$NATS_USER")"
+            printf 'nats_password       = "%s"\n' "$(hcl "$NATS_PASSWORD")"
+            printf 'auth_username       = "%s"\n' "$(hcl "$AUTH_USERNAME")"
+            printf 'auth_password       = "%s"\n' "$(hcl "$AUTH_PASSWORD")"
+            printf 'auth_access_secret  = "%s"\n' "$(hcl "$AUTH_ACCESS_SECRET")"
+            printf 'auth_refresh_secret = "%s"\n' "$(hcl "$AUTH_REFRESH_SECRET")"
+            printf 'cookie_domain       = "%s"\n' "$(hcl "$COOKIE_DOMAIN")"
+            printf 'cookie_secure       = "%s"\n' "${{ vars.COOKIE_SECURE || 'true' }}"
+            printf 'database_url        = "%s"\n' "$(hcl "$DATABASE_URL")"
+            printf 'access_secret       = "%s"\n' "$(hcl "$AUTH_ACCESS_SECRET")"
+            printf 'auth_access_ttl     = "%s"\n' "${{ vars.AUTH_ACCESS_TTL || '15m' }}"
+            printf 'auth_refresh_ttl    = "%s"\n' "${{ vars.AUTH_REFRESH_TTL || '168h' }}"
+            printf 'inactivity_timeout  = "%s"\n' "${{ vars.INACTIVITY_TIMEOUT || '3m' }}"
+            printf 'cache_ttl           = "%s"\n' "${{ vars.CACHE_TTL || '30s' }}"
+            printf 'log_level           = "info"\n'
+          } > /tmp/xservices.vars
+          chmod 600 /tmp/xservices.vars
 
       - name: Deploy via SSH
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          PLATFORM_DOMAIN: ${{ secrets.PLATFORM_DOMAIN }}
+          NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
         run: |
           echo "$DEPLOY_SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
           SCP="scp -i /tmp/deploy_key -o StrictHostKeyChecking=no"
-          SSH="ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no -o BatchMode=yes"
+          # ServerAliveInterval удерживает соединение пока nomad job run ждёт деплоя (до 3 мин).
+          SSH="ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=10"
 
-          # Копируем vars-файлы на сервер
-          $SCP /tmp/platform.vars /tmp/xservices.vars \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/"
+          # Резолвим все A-записи PLATFORM_DOMAIN — получаем список IP всех нод.
+          # Порядок случайный (DNS round-robin), что автоматически распределяет нагрузку на деплой.
+          HOSTS=$(dig +short "$PLATFORM_DOMAIN" A | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+          [ -n "$HOSTS" ] || { echo "DNS lookup failed for $PLATFORM_DOMAIN"; exit 1; }
 
-          # Обновляем job-файлы и запускаем деплой.
-          # При первом деплое /opt/platform не существует — клонируем репозиторий.
           REPO_URL="https://github.com/${{ github.repository }}.git"
-          $SSH "${DEPLOY_USER}@${DEPLOY_HOST}" "
-            set -e
-            if [ -d /opt/platform/.git ]; then
-              git -C /opt/platform pull
-            else
-              git clone '${REPO_URL}' /opt/platform
+          DEPLOYED=false
+
+          for HOST in $HOSTS; do
+            echo "Trying $HOST..."
+
+            # Копируем vars-файлы на ноду
+            if ! $SCP /tmp/platform.vars /tmp/xservices.vars "${DEPLOY_USER}@${HOST}:/tmp/" 2>/dev/null; then
+              echo "  SCP failed, skipping"
+              continue
             fi
-            nomad job run -var-file=/tmp/platform.vars  /opt/platform/deployments/infra/nomad/platform.nomad
-            nomad job run -var-file=/tmp/xservices.vars /opt/platform/deployments/infra/nomad/xservices.nomad
-            rm -f /tmp/platform.vars /tmp/xservices.vars
-          "
+
+            # Запускаем деплой. При первом деплое /opt/platform не существует — клонируем.
+            # NOMAD_TOKEN подхватывается Nomad CLI автоматически из переменной окружения.
+            # arch определяется на ноде через uname -m: x86_64→amd64, aarch64→arm64.
+            # nomad job run без -detach блокирует до завершения деплоя и возвращает
+            # ненулевой exit code если Nomad откатил job (auto_revert = true в job-файлах).
+            if $SSH "${DEPLOY_USER}@${HOST}" "
+              set -e
+              export NOMAD_TOKEN='${NOMAD_TOKEN}'
+
+              ARCH=\$(uname -m)
+              case \"\$ARCH\" in
+                x86_64)  ARCH=amd64 ;;
+                aarch64) ARCH=arm64 ;;
+                *) echo \"Unsupported arch: \$ARCH\"; exit 1 ;;
+              esac
+              echo \"Node arch: \$ARCH\"
+
+              if [ -d /opt/platform/.git ]; then
+                git -C /opt/platform pull
+              else
+                git clone '${REPO_URL}' /opt/platform
+              fi
+              nomad job run -var arch=\"\$ARCH\" -var-file=/tmp/platform.vars  /opt/platform/deployments/infra/nomad/platform.nomad
+              nomad job run -var arch=\"\$ARCH\" -var-file=/tmp/xservices.vars /opt/platform/deployments/infra/nomad/xservices.nomad
+              rm -f /tmp/platform.vars /tmp/xservices.vars
+            "; then
+              echo "Deployed successfully via $HOST"
+              DEPLOYED=true
+              break
+            else
+              echo "  Deploy failed on $HOST, trying next..."
+            fi
+          done
 
           rm -f /tmp/deploy_key /tmp/platform.vars /tmp/xservices.vars
+
+          $DEPLOYED || { echo "All nodes failed, deploy aborted"; exit 1; }

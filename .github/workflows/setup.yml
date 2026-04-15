@@ -12,6 +12,9 @@
 #   DEPLOY_USER      — SSH-пользователь (например: ubuntu)
 #   NATS_USER        — логин NATS-сервера
 #   NATS_PASSWORD    — пароль NATS-сервера
+#   NATS_CA_KEY      — приватный ключ CA (PEM, генерируется один раз локально)
+#   NATS_CA_CERT     — сертификат CA (PEM)
+#   NOMAD_TOKEN      — UUID, используется как bootstrap-секрет Nomad ACL (uuidgen)
 
 name: Setup VPS
 
@@ -50,11 +53,17 @@ jobs:
         env:
           NATS_USER: ${{ secrets.NATS_USER }}
           NATS_PASSWORD: ${{ secrets.NATS_PASSWORD }}
+          NATS_CA_KEY: ${{ secrets.NATS_CA_KEY }}
+          NATS_CA_CERT: ${{ secrets.NATS_CA_CERT }}
+          NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
         run: |
           cat > /tmp/setup_env << EOF
           PLATFORM_DOMAIN="${{ inputs.platform_domain }}"
           NATS_USER="${NATS_USER}"
           NATS_PASSWORD="${NATS_PASSWORD}"
+          NATS_CA_KEY="$(printf '%s' "${NATS_CA_KEY}" | base64 -w0)"
+          NATS_CA_CERT="$(printf '%s' "${NATS_CA_CERT}" | base64 -w0)"
+          NOMAD_TOKEN="${NOMAD_TOKEN}"
           REPO_URL="https://github.com/${{ github.repository }}.git"
           INSTALL_POSTGRES="${{ inputs.install_postgres }}"
           EOF
