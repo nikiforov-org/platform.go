@@ -17,8 +17,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 VARS_FILE="$SCRIPT_DIR/dev.vars"
-JOB_PLATFORM="$ROOT_DIR/deployments/infra/nomad/platform.nomad"
-JOB_XSERVICES="$ROOT_DIR/deployments/infra/nomad/xservices.nomad"
 BIN_DIR="$ROOT_DIR/bin"
 NOMAD_DATA_BASE="/tmp/platform-dev"
 PID_FILE="/tmp/platform-dev-pids"
@@ -65,7 +63,7 @@ build_binaries() {
   log "Сборка бинарников → $BIN_DIR ..."
   mkdir -p "$BIN_DIR"
   cd "$ROOT_DIR"
-  for svc in gateway xauth xhttp xws; do
+  for svc in $(ls "$ROOT_DIR/cmd/"); do
     go build -o "$BIN_DIR/$svc" "./cmd/$svc"
     info "✓ $svc"
   done
