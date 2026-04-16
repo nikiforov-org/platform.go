@@ -47,7 +47,8 @@ check_deps() {
 start_infra() {
   local nodes=$1
   log "Запуск инфраструктуры: $nodes нод NATS + PostgreSQL..."
-  docker compose -f "$COMPOSE_FILE" up -d --scale nats="$nodes" --remove-orphans
+  docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
+  docker compose -f "$COMPOSE_FILE" up -d --scale nats="$nodes"
   info "NATS мониторинг: http://localhost:8222"
 }
 
@@ -196,8 +197,11 @@ deploy_jobs() {
   # Совместимо с bash 3.2 (macOS).
   eval "$(grep -v '^\s*#' "$VARS_FILE" | grep -v '^\s*$' | sed 's/[[:space:]]*=[[:space:]]*/=/')"
 
-  cat > /tmp/platform-dev.nomad << NOMAD
-job "platform" {
+  # Четыре отдельных джоба — точное соответствие prod (gateway/xauth/xhttp/xws.nomad).
+  # Отличие от prod: нет блока artifact, бинарник берётся напрямую из bin/.
+
+  cat > /tmp/dev-gateway.nomad << NOMAD
+job "gateway" {
   datacenters = ["dc1"]
   type        = "service"
 
@@ -271,8 +275,8 @@ job "platform" {
 }
 NOMAD
 
-  cat > /tmp/xservices-dev.nomad << NOMAD
-job "xservices" {
+  cat > /tmp/dev-xauth.nomad << NOMAD
+job "xauth" {
   datacenters = ["dc1"]
   type        = "service"
 
@@ -328,6 +332,20 @@ job "xservices" {
       }
     }
   }
+}
+NOMAD
+
+  cat > /tmp/dev-xhttp.nomad << NOMAD
+job "xhttp" {
+  datacenters = ["dc1"]
+  type        = "service"
+
+  update {
+    max_parallel     = 1
+    min_healthy_time = "10s"
+    healthy_deadline = "3m"
+    auto_revert      = true
+  }
 
   group "xhttp" {
     count = 1
@@ -368,6 +386,20 @@ job "xservices" {
         memory = 64
       }
     }
+  }
+}
+NOMAD
+
+  cat > /tmp/dev-xws.nomad << NOMAD
+job "xws" {
+  datacenters = ["dc1"]
+  type        = "service"
+
+  update {
+    max_parallel     = 1
+    min_healthy_time = "10s"
+    healthy_deadline = "3m"
+    auto_revert      = true
   }
 
   group "xws" {
@@ -411,9 +443,10 @@ job "xservices" {
 }
 NOMAD
 
-  nomad job run /tmp/platform-dev.nomad
-  nomad job run /tmp/xservices-dev.nomad
-  info "Джобы задеплоены"
+  for job in gateway xauth xhttp xws; do
+    nomad job run "/tmp/dev-${job}.nomad"
+    info "✓ $job"
+  done
 }
 
 # =============================================================================
@@ -424,8 +457,9 @@ print_status() {
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
   echo -e "${GREEN}  Dev-окружение запущено${NC}"
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
-  nomad job status platform  2>/dev/null | grep -E "^(ID|Status|)"    | head -4 || true
-  nomad job status xservices 2>/dev/null | grep -E "^(ID|Status|)"    | head -4 || true
+  for job in gateway xauth xhttp xws; do
+    nomad job status "$job" 2>/dev/null | grep -E "^(ID|Status)" | head -2 || true
+  done
   echo ""
   info "Gateway:    http://localhost:8080"
   info "Nomad UI:   http://localhost:4646"
@@ -440,8 +474,9 @@ print_status() {
 stop_all() {
   log "Остановка сервисов..."
   # Nomad джобы
-  nomad job stop platform   2>/dev/null && info "✓ job platform остановлен"   || true
-  nomad job stop xservices  2>/dev/null && info "✓ job xservices остановлен"  || true
+  for job in gateway xauth xhttp xws; do
+    nomad job stop "$job" 2>/dev/null && info "✓ job $job остановлен" || true
+  done
 
   # Nomad агенты
   if [[ -f "$PID_FILE" ]]; then
@@ -456,7 +491,13 @@ stop_all() {
 
   # Временные данные Nomad
   rm -rf "$NOMAD_DATA_BASE"
-  log "Остановлено."
+
+  # Завершаем Docker Desktop — сбрасывает port allocator.
+  # Перед следующим start.sh запусти Docker Desktop вручную.
+  log "Завершение Docker Desktop..."
+  osascript -e 'quit app "Docker Desktop"' 2>/dev/null && info "✓ Docker Desktop завершён" || true
+
+  log "Остановлено. Запусти Docker Desktop вручную перед следующим start.sh"
 }
 
 # =============================================================================
