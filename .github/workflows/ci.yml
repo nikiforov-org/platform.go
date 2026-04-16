@@ -1,38 +1,19 @@
 # .github/workflows/ci.yml
 #
 # CI: сборка + проверка + тесты на каждый push/PR.
-# Deploy: автоматический деплой в production при push в main (только если CI прошёл).
+# Release: сборка релизных бинарников и создание pre-release при push в main.
 #
-# Необходимые GitHub Secrets:
-#   DEPLOY_SSH_KEY           — приватный SSH-ключ для подключения к серверу
-#   DEPLOY_USER              — SSH-пользователь (например: ubuntu)
-#   PLATFORM_DOMAIN          — домен A-записей кластера (например: nodes.example.com)
-#                              CI резолвит все A-записи и перебирает ноды по порядку.
-#                              Добавил ноду в DNS — она автоматически участвует в деплое.
+# Деплой каждого сервиса — в отдельных *-deploy.yml файлах.
+# Добавить новый сервис: cmd/newservice/ + newservice.nomad + newservice-deploy.yml.
+# Этот файл не трогать.
 #
-#   NATS_USER                — логин NATS-сервера
-#   NATS_PASSWORD            — пароль NATS-сервера
-#   ALLOWED_HOSTS            — разрешённые Origin (через запятую)
-#   GATEWAY_AUTH_RATE_PREFIX — URL-префикс жёсткого лимита (например: /v1/xauth/)
-#   GATEWAY_TRUSTED_PROXY    — IP доверенного прокси/LB (Cloudflare и т.п.)
-#
-#   AUTH_USERNAME            — логин xauth
-#   AUTH_PASSWORD            — пароль xauth
-#   AUTH_ACCESS_SECRET       — HMAC-ключ access JWT  (openssl rand -hex 32)
-#   AUTH_REFRESH_SECRET      — HMAC-ключ refresh JWT (openssl rand -hex 32)
-#   COOKIE_DOMAIN            — домен для Set-Cookie (например: .example.com)
-#
-#   DATABASE_URL             — PostgreSQL DSN для xhttp
-#                              (postgres://user:pass@host:5432/db?sslmode=require)
-#
-# Необязательные GitHub Variables (Settings → Variables, не Secrets):
-#   COOKIE_SECURE        — true/false, по умолчанию true (false только для HTTP-разработки)
-#   AUTH_ACCESS_TTL      — время жизни access JWT, по умолчанию 15m
-#   AUTH_REFRESH_TTL     — время жизни refresh JWT, по умолчанию 168h
-#   INACTIVITY_TIMEOUT   — таймаут WebSocket-сессии, по умолчанию 3m
-#   CACHE_TTL            — TTL кэша xhttp, по умолчанию 30s
+# Необходимые GitHub Secrets (общие, используются в *-deploy.yml):
+#   DEPLOY_SSH_KEY   — приватный SSH-ключ для подключения к серверу
+#   DEPLOY_USER      — SSH-пользователь (например: ubuntu)
+#   PLATFORM_DOMAIN  — домен A-записей кластера (например: nodes.example.com)
+#   NOMAD_TOKEN      — Nomad ACL bootstrap token
 
-name: CI / Deploy
+name: CI
 
 on:
   push:
@@ -42,7 +23,6 @@ on:
 jobs:
   # ===========================================================================
   # CI — сборка, линтинг, тесты
-  # Запускается на каждый push и PR.
   # ===========================================================================
   ci:
     name: Build & Test
@@ -66,14 +46,20 @@ jobs:
         run: go test ./...
 
   # ===========================================================================
-  # Deploy — сборка релизных бинарников, создание pre-release, SSH-деплой.
-  # Запускается только при push в main после успешного прохождения ci.
+  # Release — сборка релизных бинарников и создание pre-release.
+  # Запускается только при push в main после успешного ci.
+  #
+  # Публикует checksums как GitHub Actions artifact — deploy workflows
+  # скачивают его через run-id для точной привязки к этому запуску.
   # ===========================================================================
-  deploy:
-    name: Deploy
+  release:
+    name: Release
     needs: ci
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -84,12 +70,16 @@ jobs:
           cache: true
 
       - name: Set build version
-        run: echo "VERSION=build-${{ github.run_number }}" >> "$GITHUB_ENV"
+        id: version
+        run: |
+          VERSION="build-${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build release binaries
         run: |
           mkdir -p dist
-          for svc in gateway xauth xhttp xws; do
+          for svc in $(ls cmd/); do
             for arch in amd64 arm64; do
               GOOS=linux GOARCH=$arch CGO_ENABLED=0 \
                 go build -trimpath -o dist/$svc ./cmd/$svc
@@ -98,169 +88,43 @@ jobs:
               rm dist/$svc
             done
           done
-          # Вычисляем SHA256 архивов — передаём в Nomad artifact для проверки целостности.
-          for svc in gateway xauth xhttp xws; do
+
+      - name: Compute checksums
+        run: |
+          # Формат: CS_GATEWAY_AMD64=sha256:<hex>
+          # Deploy workflows скачивают этот артефакт и читают как env vars.
+          for svc in $(ls cmd/); do
             for arch in amd64 arm64; do
               varname="CS_$(echo $svc | tr '[:lower:]' '[:upper:]')_$(echo $arch | tr '[:lower:]' '[:upper:]')"
               hash=$(sha256sum "dist/${svc}_linux_${arch}.tar.gz" | awk '{print $1}')
-              echo "${varname}=sha256:${hash}" >> "$GITHUB_ENV"
+              echo "${varname}=sha256:${hash}"
             done
-          done
+          done > dist/checksums.env
 
-      # Создаём GitHub pre-release с тегом build-N.
-      # Nomad скачивает бинарники из этого релиза через artifact {}.
+      - name: Upload checksums artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/checksums.env
+          retention-days: 7
+
       - name: Create pre-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.VERSION }}
+          tag_name: ${{ steps.version.outputs.value }}
           prerelease: true
           files: dist/*.tar.gz
           generate_release_notes: false
 
-      # Удаляем старые pre-release'ы build-*, оставляем последние 10.
-      # Стабильные релизы (v*) не трогаем.
       - name: Cleanup old pre-releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           KEEP=5
-          # Берём только pre-release'ы с тегом build-*, сортируем по дате (новые первые)
-          gh release list --repo "${{ github.repository }}" --limit 100 --json tagName,isPrerelease,createdAt \
+          gh release list --repo "${{ github.repository }}" --limit 100 \
+            --json tagName,isPrerelease,createdAt \
             | jq -r '.[] | select(.isPrerelease and (.tagName | startswith("build-"))) | .tagName' \
             | tail -n +$(( KEEP + 1 )) \
-            | xargs -r -I {} sh -c 'echo "Deleting {}..." && gh release delete {} --repo "${{ github.repository }}" --yes --cleanup-tag'
-
-      # Деплой через SSH.
-      # Секреты передаются как -var key=value напрямую в nomad job run — файлы с секретами
-      # на сервере не создаются. printf '%q' экранирует значения для безопасной передачи
-      # через SSH: данные идут в зашифрованном канале и не пишутся на диск.
-      - name: Deploy via SSH
-        env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          PLATFORM_DOMAIN: ${{ secrets.PLATFORM_DOMAIN }}
-          NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
-          NATS_USER: ${{ secrets.NATS_USER }}
-          NATS_PASSWORD: ${{ secrets.NATS_PASSWORD }}
-          ALLOWED_HOSTS: ${{ secrets.ALLOWED_HOSTS }}
-          GATEWAY_AUTH_RATE_PREFIX: ${{ secrets.GATEWAY_AUTH_RATE_PREFIX }}
-          GATEWAY_TRUSTED_PROXY: ${{ secrets.GATEWAY_TRUSTED_PROXY }}
-          AUTH_USERNAME: ${{ secrets.AUTH_USERNAME }}
-          AUTH_PASSWORD: ${{ secrets.AUTH_PASSWORD }}
-          AUTH_ACCESS_SECRET: ${{ secrets.AUTH_ACCESS_SECRET }}
-          AUTH_REFRESH_SECRET: ${{ secrets.AUTH_REFRESH_SECRET }}
-          COOKIE_DOMAIN: ${{ secrets.COOKIE_DOMAIN }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          echo "$DEPLOY_SSH_KEY" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
-          # ServerAliveInterval удерживает соединение пока nomad job run ждёт деплоя (до 3 мин).
-          SSH="ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=10"
-
-          # Резолвим все A-записи PLATFORM_DOMAIN — получаем список IP всех нод.
-          HOSTS=$(dig +short "$PLATFORM_DOMAIN" A | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
-          [ -n "$HOSTS" ] || { echo "DNS lookup failed for $PLATFORM_DOMAIN"; exit 1; }
-
-          REPO_URL="https://github.com/${{ github.repository }}.git"
-
-          # printf '%q' экранирует значения для безопасной вставки в shell-команду.
-          # Работает с любыми символами: $, \, ", пробелы, спецсимволы.
-          Q_NOMAD_TOKEN=$(printf '%q' "$NOMAD_TOKEN")
-          Q_NATS_USER=$(printf '%q' "$NATS_USER")
-          Q_NATS_PASSWORD=$(printf '%q' "$NATS_PASSWORD")
-          Q_ALLOWED_HOSTS=$(printf '%q' "$ALLOWED_HOSTS")
-          Q_GW_AUTH_PREFIX=$(printf '%q' "$GATEWAY_AUTH_RATE_PREFIX")
-          Q_GW_PROXY=$(printf '%q' "$GATEWAY_TRUSTED_PROXY")
-          Q_AUTH_USERNAME=$(printf '%q' "$AUTH_USERNAME")
-          Q_AUTH_PASSWORD=$(printf '%q' "$AUTH_PASSWORD")
-          Q_AUTH_ACCESS_SECRET=$(printf '%q' "$AUTH_ACCESS_SECRET")
-          Q_AUTH_REFRESH_SECRET=$(printf '%q' "$AUTH_REFRESH_SECRET")
-          Q_COOKIE_DOMAIN=$(printf '%q' "$COOKIE_DOMAIN")
-          Q_DATABASE_URL=$(printf '%q' "$DATABASE_URL")
-
-          DEPLOYED=false
-
-          for HOST in $HOSTS; do
-            echo "Trying $HOST..."
-
-            # Запускаем деплой. Секреты передаются через -var, файлы с секретами на сервере
-            # не создаются. arch определяется на ноде через uname -m.
-            # nomad job run без -detach блокирует до завершения деплоя и возвращает
-            # ненулевой exit code если Nomad откатил job (auto_revert = true в job-файлах).
-            if $SSH "${DEPLOY_USER}@${HOST}" "
-              set -e
-              export NOMAD_TOKEN=$Q_NOMAD_TOKEN
-
-              ARCH=\$(uname -m)
-              case \"\$ARCH\" in
-                x86_64)
-                  ARCH=amd64
-                  CS_GATEWAY='${CS_GATEWAY_AMD64}'
-                  CS_XAUTH='${CS_XAUTH_AMD64}'
-                  CS_XHTTP='${CS_XHTTP_AMD64}'
-                  CS_XWS='${CS_XWS_AMD64}'
-                  ;;
-                aarch64)
-                  ARCH=arm64
-                  CS_GATEWAY='${CS_GATEWAY_ARM64}'
-                  CS_XAUTH='${CS_XAUTH_ARM64}'
-                  CS_XHTTP='${CS_XHTTP_ARM64}'
-                  CS_XWS='${CS_XWS_ARM64}'
-                  ;;
-                *) echo \"Unsupported arch: \$ARCH\"; exit 1 ;;
-              esac
-              echo \"Node arch: \$ARCH\"
-
-              if [ -d /opt/platform/.git ]; then
-                git -C /opt/platform pull
-              else
-                git clone '$REPO_URL' /opt/platform
-              fi
-
-              nomad job run \\
-                -var arch=\"\$ARCH\" \\
-                -var checksum_gateway=\"\$CS_GATEWAY\" \\
-                -var github_repo='${{ github.repository }}' \\
-                -var version='${{ env.VERSION }}' \\
-                -var nats_user=$Q_NATS_USER \\
-                -var nats_password=$Q_NATS_PASSWORD \\
-                -var allowed_hosts=$Q_ALLOWED_HOSTS \\
-                -var gateway_auth_rate_prefix=$Q_GW_AUTH_PREFIX \\
-                -var gateway_trusted_proxy=$Q_GW_PROXY \\
-                -var log_level=info \\
-                /opt/platform/deployments/infra/nomad/platform.nomad
-
-              nomad job run \\
-                -var arch=\"\$ARCH\" \\
-                -var checksum_xauth=\"\$CS_XAUTH\" \\
-                -var checksum_xhttp=\"\$CS_XHTTP\" \\
-                -var checksum_xws=\"\$CS_XWS\" \\
-                -var github_repo='${{ github.repository }}' \\
-                -var version='${{ env.VERSION }}' \\
-                -var nats_user=$Q_NATS_USER \\
-                -var nats_password=$Q_NATS_PASSWORD \\
-                -var auth_username=$Q_AUTH_USERNAME \\
-                -var auth_password=$Q_AUTH_PASSWORD \\
-                -var auth_access_secret=$Q_AUTH_ACCESS_SECRET \\
-                -var auth_refresh_secret=$Q_AUTH_REFRESH_SECRET \\
-                -var cookie_domain=$Q_COOKIE_DOMAIN \\
-                -var cookie_secure='${{ vars.COOKIE_SECURE || 'true' }}' \\
-                -var database_url=$Q_DATABASE_URL \\
-                -var access_secret=$Q_AUTH_ACCESS_SECRET \\
-                -var auth_access_ttl='${{ vars.AUTH_ACCESS_TTL || '15m' }}' \\
-                -var auth_refresh_ttl='${{ vars.AUTH_REFRESH_TTL || '168h' }}' \\
-                -var inactivity_timeout='${{ vars.INACTIVITY_TIMEOUT || '3m' }}' \\
-                -var cache_ttl='${{ vars.CACHE_TTL || '30s' }}' \\
-                -var log_level=info \\
-                /opt/platform/deployments/infra/nomad/xservices.nomad
-            "; then
-              echo "Deployed successfully via $HOST"
-              DEPLOYED=true
-              break
-            else
-              echo "  Deploy failed on $HOST, trying next..."
-            fi
-          done
-
-          rm -f /tmp/deploy_key
-          $DEPLOYED || { echo "All nodes failed, deploy aborted"; exit 1; }
+            | xargs -r -I {} sh -c \
+              'echo "Deleting {}..." && gh release delete {} \
+               --repo "${{ github.repository }}" --yes --cleanup-tag'

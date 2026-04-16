@@ -1,0 +1,112 @@
+# .github/actions/deploy-nomad/action.yml
+#
+# Composite action: деплой одного Nomad-джоба.
+#
+# Читает объявленные переменные из .nomad файла, берёт значения из env
+# вызывающего workflow, передаёт в nomad job run.
+#
+# Inputs:
+#   nomad_file — имя .nomad файла (например: gateway.nomad)
+#   version    — версия релиза (например: build-42)
+#
+# Требует в env вызывающего workflow:
+#   DEPLOY_SSH_KEY, DEPLOY_USER, PLATFORM_DOMAIN, NOMAD_TOKEN
+#   CS_<SVC>_AMD64, CS_<SVC>_ARM64  — из артефакта checksums
+#   + все переменные объявленные в .nomad файле
+
+name: Deploy Nomad job
+description: Deploys a single Nomad job. Reads required vars from the .nomad file and passes them from env.
+
+inputs:
+  nomad_file:
+    description: Name of the .nomad file (e.g. gateway.nomad)
+    required: true
+  version:
+    description: Release version to deploy (e.g. build-42)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Deploy via SSH
+      shell: bash
+      env:
+        NOMAD_FILE: ${{ inputs.nomad_file }}
+        DEPLOY_VERSION: ${{ inputs.version }}
+      run: |
+        echo "$DEPLOY_SSH_KEY" > /tmp/deploy_key
+        chmod 600 /tmp/deploy_key
+        SSH="ssh -i /tmp/deploy_key \
+          -o StrictHostKeyChecking=no \
+          -o BatchMode=yes \
+          -o ConnectTimeout=10 \
+          -o ServerAliveInterval=30 \
+          -o ServerAliveCountMax=10"
+
+        # Резолвим все A-записи PLATFORM_DOMAIN.
+        HOSTS=$(dig +short "$PLATFORM_DOMAIN" A | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+        [ -n "$HOSTS" ] || { echo "DNS lookup failed for $PLATFORM_DOMAIN"; exit 1; }
+
+        REPO_URL="https://github.com/${{ github.repository }}.git"
+
+        # Читаем переменные объявленные в .nomad файле.
+        DECLARED=$(grep -oP 'variable "\K[^"]+' \
+          "deployments/infra/nomad/${NOMAD_FILE}")
+
+        # Имя сервиса = имя файла без .nomad.
+        SVC="${NOMAD_FILE%.nomad}"
+        SVC_UPPER=$(echo "$SVC" | tr '[:lower:]' '[:upper:]')
+
+        DEPLOYED=false
+
+        for HOST in $HOSTS; do
+          echo "Trying $HOST..."
+
+          REMOTE_ARCH=$($SSH "${DEPLOY_USER}@${HOST}" "uname -m" 2>/dev/null) || continue
+          case "$REMOTE_ARCH" in
+            x86_64)  ARCH=amd64 ;;
+            aarch64) ARCH=arm64 ;;
+            *) echo "Unsupported arch: $REMOTE_ARCH"; continue ;;
+          esac
+
+          CS_VAR="CS_${SVC_UPPER}_$(echo $ARCH | tr '[:lower:]' '[:upper:]')"
+          CHECKSUM_VALUE="${!CS_VAR}"
+
+          # Строим -var аргументы из переменных объявленных в .nomad файле.
+          VAR_ARGS=""
+          for VAR in $DECLARED; do
+            case "$VAR" in
+              ARCH)        VAL="$ARCH" ;;
+              CHECKSUM)    VAL="$CHECKSUM_VALUE" ;;
+              GITHUB_REPO) VAL="${{ github.repository }}" ;;
+              VERSION)     VAL="$DEPLOY_VERSION" ;;
+              *)           VAL="${!VAR}" ;;
+            esac
+            VAR_ARGS="$VAR_ARGS -var ${VAR}=$(printf '%q' "$VAL")"
+          done
+
+          Q_NOMAD_TOKEN=$(printf '%q' "$NOMAD_TOKEN")
+
+          if $SSH "${DEPLOY_USER}@${HOST}" "
+            set -e
+            export NOMAD_TOKEN=$Q_NOMAD_TOKEN
+
+            if [ -d /opt/platform/.git ]; then
+              git -C /opt/platform pull
+            else
+              git clone '$REPO_URL' /opt/platform
+            fi
+
+            nomad job run $VAR_ARGS \
+              /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
+          "; then
+            echo "Deployed ${NOMAD_FILE} successfully via $HOST"
+            DEPLOYED=true
+            break
+          else
+            echo "  Deploy failed on $HOST, trying next..."
+          fi
+        done
+
+        rm -f /tmp/deploy_key
+        $DEPLOYED || { echo "All nodes failed, deploy of ${NOMAD_FILE} aborted"; exit 1; }

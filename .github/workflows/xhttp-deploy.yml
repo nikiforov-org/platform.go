@@ -1,0 +1,54 @@
+# .github/workflows/xhttp-deploy.yml
+#
+# Деплой xhttp. Запускается после успешного CI.
+#
+# GitHub Secrets:
+#   DEPLOY_SSH_KEY, DEPLOY_USER, PLATFORM_DOMAIN, NOMAD_TOKEN  — общие
+#   NATS_USER, NATS_PASSWORD
+#   DATABASE_URL   — PostgreSQL DSN (postgres://user:pass@host:5432/db?sslmode=require)
+#   ACCESS_SECRET  — HMAC-ключ валидации JWT; должен совпадать с AUTH_ACCESS_SECRET в xauth
+#
+# GitHub Variables (необязательные):
+#   CACHE_TTL  — по умолчанию 30s
+
+name: Deploy xhttp
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    env:
+      DEPLOY_SSH_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_USER:     ${{ secrets.DEPLOY_USER }}
+      PLATFORM_DOMAIN: ${{ secrets.PLATFORM_DOMAIN }}
+      NOMAD_TOKEN:     ${{ secrets.NOMAD_TOKEN }}
+      NATS_USER:       ${{ secrets.NATS_USER }}
+      NATS_PASSWORD:   ${{ secrets.NATS_PASSWORD }}
+      DATABASE_URL:    ${{ secrets.DATABASE_URL }}
+      ACCESS_SECRET:   ${{ secrets.ACCESS_SECRET }}
+      CACHE_TTL:       ${{ vars.CACHE_TTL || '30s' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download checksums
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load checksums into env
+        run: cat checksums.env >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/deploy-nomad
+        with:
+          nomad_file: xhttp.nomad
+          version: build-${{ github.event.workflow_run.run_number }}

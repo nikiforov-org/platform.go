@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write  # создание релиза и загрузка артефактов
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +23,7 @@ jobs:
       - name: Build binaries
         run: |
           mkdir -p dist
-          for svc in gateway xauth xhttp xws; do
+          for svc in $(ls cmd/); do
             for arch in amd64 arm64; do
               GOOS=linux GOARCH=$arch CGO_ENABLED=0 \
                 go build -trimpath -o dist/$svc ./cmd/$svc

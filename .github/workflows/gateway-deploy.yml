@@ -1,0 +1,52 @@
+# .github/workflows/gateway-deploy.yml
+#
+# Деплой Gateway. Запускается после успешного CI.
+#
+# GitHub Secrets:
+#   DEPLOY_SSH_KEY, DEPLOY_USER, PLATFORM_DOMAIN, NOMAD_TOKEN  — общие
+#   NATS_USER, NATS_PASSWORD
+#   ALLOWED_HOSTS             — разрешённые HTTP Origin (через запятую)
+#   GATEWAY_AUTH_RATE_PREFIX  — URL-префикс жёсткого rate limit
+#   GATEWAY_TRUSTED_PROXY     — IP доверенного прокси/LB
+
+name: Deploy gateway
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    env:
+      DEPLOY_SSH_KEY:           ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_USER:              ${{ secrets.DEPLOY_USER }}
+      PLATFORM_DOMAIN:          ${{ secrets.PLATFORM_DOMAIN }}
+      NOMAD_TOKEN:              ${{ secrets.NOMAD_TOKEN }}
+      NATS_USER:                ${{ secrets.NATS_USER }}
+      NATS_PASSWORD:            ${{ secrets.NATS_PASSWORD }}
+      ALLOWED_HOSTS:            ${{ secrets.ALLOWED_HOSTS }}
+      GATEWAY_AUTH_RATE_PREFIX: ${{ secrets.GATEWAY_AUTH_RATE_PREFIX }}
+      GATEWAY_TRUSTED_PROXY:    ${{ secrets.GATEWAY_TRUSTED_PROXY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download checksums
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load checksums into env
+        run: cat checksums.env >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/deploy-nomad
+        with:
+          nomad_file: gateway.nomad
+          version: build-${{ github.event.workflow_run.run_number }}

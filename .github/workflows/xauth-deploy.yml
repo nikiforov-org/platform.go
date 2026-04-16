@@ -1,0 +1,63 @@
+# .github/workflows/xauth-deploy.yml
+#
+# Деплой xauth. Запускается после успешного CI.
+#
+# GitHub Secrets:
+#   DEPLOY_SSH_KEY, DEPLOY_USER, PLATFORM_DOMAIN, NOMAD_TOKEN  — общие
+#   NATS_USER, NATS_PASSWORD
+#   AUTH_USERNAME, AUTH_PASSWORD
+#   AUTH_ACCESS_SECRET   — HMAC-ключ access JWT  (openssl rand -hex 32)
+#   AUTH_REFRESH_SECRET  — HMAC-ключ refresh JWT (openssl rand -hex 32)
+#   COOKIE_DOMAIN        — домен для Set-Cookie (например: .example.com)
+#
+# GitHub Variables (необязательные, Settings → Variables):
+#   AUTH_ACCESS_TTL   — по умолчанию 15m
+#   AUTH_REFRESH_TTL  — по умолчанию 168h
+#   COOKIE_SECURE     — по умолчанию true
+
+name: Deploy xauth
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    env:
+      DEPLOY_SSH_KEY:     ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_USER:        ${{ secrets.DEPLOY_USER }}
+      PLATFORM_DOMAIN:    ${{ secrets.PLATFORM_DOMAIN }}
+      NOMAD_TOKEN:        ${{ secrets.NOMAD_TOKEN }}
+      NATS_USER:          ${{ secrets.NATS_USER }}
+      NATS_PASSWORD:      ${{ secrets.NATS_PASSWORD }}
+      AUTH_USERNAME:      ${{ secrets.AUTH_USERNAME }}
+      AUTH_PASSWORD:      ${{ secrets.AUTH_PASSWORD }}
+      AUTH_ACCESS_SECRET: ${{ secrets.AUTH_ACCESS_SECRET }}
+      AUTH_REFRESH_SECRET: ${{ secrets.AUTH_REFRESH_SECRET }}
+      COOKIE_DOMAIN:      ${{ secrets.COOKIE_DOMAIN }}
+      COOKIE_SECURE:      ${{ vars.COOKIE_SECURE || 'true' }}
+      AUTH_ACCESS_TTL:    ${{ vars.AUTH_ACCESS_TTL || '15m' }}
+      AUTH_REFRESH_TTL:   ${{ vars.AUTH_REFRESH_TTL || '168h' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download checksums
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load checksums into env
+        run: cat checksums.env >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/deploy-nomad
+        with:
+          nomad_file: xauth.nomad
+          version: build-${{ github.event.workflow_run.run_number }}
