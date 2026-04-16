@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -46,6 +47,9 @@ func main() {
 	gw := gateway.New(natsClient, cfg, log, stopCh)
 
 	// 5. HTTP-сервер.
+	// BaseContext — чтобы r.Context() каждого входящего запроса отменялся при
+	// graceful shutdown. Это позволяет NATS-вызовам (RequestMsgWithContext)
+	// и WS-обработчикам мгновенно реагировать на shutdown, а не ждать таймаута.
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           gw.Handler(),
@@ -53,6 +57,7 @@ func main() {
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,
 		IdleTimeout:       cfg.HTTP.IdleTimeout,
+		BaseContext:       func(net.Listener) context.Context { return gw.RootContext() },
 	}
 
 	// 6. Graceful Shutdown.

@@ -4,6 +4,7 @@ package gateway
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -77,6 +78,14 @@ func New(natsClient *nc.PlatformClient, cfg Config, log zerolog.Logger, stop <-c
 		},
 	}
 	return gw
+}
+
+// RootContext возвращает корневой контекст шлюза.
+// Отменяется при закрытии stop-канала (graceful shutdown).
+// Предназначен для http.Server.BaseContext — чтобы все входящие запросы
+// наследовали shutdown-сигнал и могли его наблюдать через r.Context().
+func (gw *Gateway) RootContext() context.Context {
+	return gw.ctx
 }
 
 // Handler возвращает корневой http.Handler шлюза.
@@ -217,10 +226,16 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 		msg.Header.Set("Cookie", cookie)
 	}
 
-	resp, err := gw.nats.Conn.RequestMsg(msg, 5*time.Second)
+	// Контекст NATS-запроса: клиентская отмена (r.Context) + shutdown (BaseContext=gw.ctx)
+	// + явный таймаут на случай зависания NATS/бекенда.
+	ctx, cancel := context.WithTimeout(r.Context(), gw.cfg.HTTP.NATSRequestTimeout)
+	defer cancel()
+
+	resp, err := gw.nats.Conn.RequestMsgWithContext(ctx, msg)
 	if err != nil {
-		gw.log.Error().Err(err).Str("req", reqID).Str("subject", subject).Msg("NATS request error")
-		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		status, reason := natsRequestErrStatus(r.Context(), err)
+		gw.log.Error().Err(err).Str("req", reqID).Str("subject", subject).Int("status", status).Str("reason", reason).Msg("NATS request error")
+		http.Error(w, reason, status)
 		return
 	}
 
@@ -268,6 +283,27 @@ func isTimeoutError(err error) bool {
 		return ne.Timeout()
 	}
 	return false
+}
+
+// natsRequestErrStatus классифицирует ошибку NATS Request-Reply в HTTP-статус.
+//
+//   - 499 "client closed request" — клиент отменил запрос (закрыл соединение,
+//     shutdown сервера). Нестандартный, но распространённый (nginx) код; ответ
+//     обычно до клиента не доходит, код полезен в логах и метриках.
+//   - 504 "gateway timeout"       — сработал собственный таймаут gateway
+//     (GATEWAY_NATS_REQUEST_TIMEOUT), клиент ещё подключён.
+//   - 503 "service unavailable"   — прочие ошибки (NATS disconnected, no responders).
+func natsRequestErrStatus(clientCtx context.Context, err error) (int, string) {
+	// Проверяем клиентский контекст отдельно: именно он различает "клиент отменил"
+	// от "наш таймаут истёк". WithTimeout поверх r.Context() возвращает DeadlineExceeded
+	// в обоих случаях — clientCtx.Err() даёт однозначный ответ.
+	if clientCtx.Err() == context.Canceled {
+		return 499, "client closed request"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout, "gateway timeout"
+	}
+	return http.StatusServiceUnavailable, "service unavailable"
 }
 
 // newRequestID генерирует уникальный идентификатор запроса (8 байт = 16 hex-символов).
@@ -318,29 +354,54 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 		return
 	}
 	defer releaseConn()
-	defer conn.Close()
 
 	// Генерируем уникальный ID сессии (8 байт = 16 hex-символов).
 	sidRaw := make([]byte, 8)
 	if _, err := rand.Read(sidRaw); err != nil {
 		gw.log.Error().Err(err).Msg("ошибка генерации session ID")
+		conn.Close()
 		return
 	}
 	sessionID := fmt.Sprintf("%x", sidRaw)
 
 	// Наследуемся от gw.ctx: при shutdown сервера все WS-сессии отменяются.
 	ctx, cancel := context.WithCancel(gw.ctx)
-	defer cancel()
 
-	// mu защищает все записи в conn от гонки между горутиной Ping и NATS-коллбэком.
+	// mu защищает ВСЕ обращения к conn (Write, Close) от гонок между:
+	//   - горутиной Ping,
+	//   - NATS-коллбэком подписки .out.{sid},
+	//   - shutdown-горутиной,
+	//   - основным циклом ReadMessage.
+	// Close() тоже захватывает mu — гарантирует, что WriteMessage не может выполняться
+	// параллельно с закрытием. ctx.Done() под тем же mu — барьер от записи в уже
+	// отменённую сессию.
 	var mu sync.Mutex
 
 	safeWrite := func(msgType int, data []byte) error {
 		mu.Lock()
 		defer mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		conn.SetWriteDeadline(time.Now().Add(wsWriteDeadline))
 		return conn.WriteMessage(msgType, data)
 	}
+
+	// Объединённый cancel + close. Порядок важен:
+	//   1. cancel() — сигнал всем горутинам (Ping, shutdown, NATS callback),
+	//      safeWrite после этого вернётся без записи.
+	//   2. mu.Lock() — ждём завершения текущего WriteMessage, если в полёте.
+	//   3. conn.Close() — финальное закрытие WS-соединения.
+	// defer срабатывает ПОСЛЕ defer sub.Unsubscribe() (LIFO): сначала отписка от NATS,
+	// чтобы новые коллбэки не стартовали, потом cancel → закрытие.
+	defer func() {
+		cancel()
+		mu.Lock()
+		defer mu.Unlock()
+		_ = conn.Close()
+	}()
 
 	// PongHandler сдвигает ReadDeadline при каждом успешном Pong от клиента.
 	conn.SetPongHandler(func(string) error {
@@ -365,12 +426,20 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 
 	// Подписка на исходящий поток: Микросервис → Браузер.
 	sub, err := gw.nats.Conn.Subscribe(fmt.Sprintf("%s.out.%s", baseSubject, sessionID), func(m *nats.Msg) {
+		// Быстрый выход без lock contention: при массовом shutdown очередь коллбэков
+		// NATS-диспетчера не будет толпиться на mu — каждый сразу увидит ctx.Done.
+		if ctx.Err() != nil {
+			return
+		}
 		if m.Header.Get("Control") == "CLOSE" {
 			cancel()
 			return
 		}
 		if err := safeWrite(websocket.TextMessage, m.Data); err != nil {
-			gw.log.Error().Err(err).Str("sid", sessionID).Msg("WS write error")
+			// context.Canceled — штатный выход при shutdown, не ошибка.
+			if !errors.Is(err, context.Canceled) {
+				gw.log.Error().Err(err).Str("sid", sessionID).Msg("WS write error")
+			}
 			cancel()
 		}
 	})

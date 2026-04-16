@@ -83,6 +83,11 @@ type HTTPConfig struct {
 
 	// IdleTimeout — таймаут keep-alive соединений (HTTP_IDLE_TIMEOUT).
 	IdleTimeout time.Duration
+
+	// NATSRequestTimeout — максимальное время ожидания ответа от бекенда через NATS
+	// Request-Reply (GATEWAY_NATS_REQUEST_TIMEOUT). Гарантирует, что gateway-горутина
+	// не зависает дольше заданного, даже если клиент продолжает ждать.
+	NATSRequestTimeout time.Duration
 }
 
 // LoadConfig читает все параметры конфигурации из переменных окружения.
@@ -94,6 +99,7 @@ type HTTPConfig struct {
 //	HTTP_READ_TIMEOUT          — таймаут чтения запроса    (формат: 15s) ("15s")
 //	HTTP_WRITE_TIMEOUT         — таймаут записи ответа     (формат: 15s) ("15s")
 //	HTTP_IDLE_TIMEOUT          — таймаут keep-alive        (формат: 60s) ("60s")
+//	GATEWAY_NATS_REQUEST_TIMEOUT — таймаут ожидания ответа из NATS (5s)  ("5s")
 //
 //	NATS_HOST                  — хост NATS-сервера                       ("127.0.0.1")
 //	NATS_PORT                  — клиентский порт NATS                    (4222)
@@ -138,7 +144,8 @@ func LoadConfig() (Config, error) {
 			ReadHeaderTimeout: utils.GetEnv("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
 			ReadTimeout:       utils.GetEnv("HTTP_READ_TIMEOUT", 15*time.Second),
 			WriteTimeout:      utils.GetEnv("HTTP_WRITE_TIMEOUT", 15*time.Second),
-			IdleTimeout:       utils.GetEnv("HTTP_IDLE_TIMEOUT", 60*time.Second),
+			IdleTimeout:        utils.GetEnv("HTTP_IDLE_TIMEOUT", 60*time.Second),
+			NATSRequestTimeout: utils.GetEnv("GATEWAY_NATS_REQUEST_TIMEOUT", 5*time.Second),
 		},
 		NATS:         natsCfg,
 		AllowedHosts: allowedHosts,

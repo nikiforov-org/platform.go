@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Audit status
+
+Единый рабочий файл аудита платформы: [`docs/audit/STATUS.md`](docs/audit/STATUS.md). Читать в начале любой сессии, связанной с правкой/разбором кода. Источник правды о состоянии открытых (`- [ ]`) и закрытых (`- [x]`) находок. Приоритет: Critical > High > Medium > Low. ID находок стабильные (`P-C1`, `I-H2`, `D-M3`, `G4` — P=platform, I=infra/CI, D=demo, G=global). После фикса — поменять чекбокс на `[x]` с пометкой даты и краткого описания, в том же файле.
+
 ## Local Development
 
 Dev-окружение запускается скриптом `deployments/envs/dev/start.sh`:
