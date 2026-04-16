@@ -98,6 +98,14 @@ jobs:
               rm dist/$svc
             done
           done
+          # Вычисляем SHA256 архивов — передаём в Nomad artifact для проверки целостности.
+          for svc in gateway xauth xhttp xws; do
+            for arch in amd64 arm64; do
+              varname="CS_$(echo $svc | tr '[:lower:]' '[:upper:]')_$(echo $arch | tr '[:lower:]' '[:upper:]')"
+              hash=$(sha256sum "dist/${svc}_linux_${arch}.tar.gz" | awk '{print $1}')
+              echo "${varname}=sha256:${hash}" >> "$GITHUB_ENV"
+            done
+          done
 
       # Создаём GitHub pre-release с тегом build-N.
       # Nomad скачивает бинарники из этого релиза через artifact {}.
@@ -185,8 +193,20 @@ jobs:
 
               ARCH=\$(uname -m)
               case \"\$ARCH\" in
-                x86_64)  ARCH=amd64 ;;
-                aarch64) ARCH=arm64 ;;
+                x86_64)
+                  ARCH=amd64
+                  CS_GATEWAY='${CS_GATEWAY_AMD64}'
+                  CS_XAUTH='${CS_XAUTH_AMD64}'
+                  CS_XHTTP='${CS_XHTTP_AMD64}'
+                  CS_XWS='${CS_XWS_AMD64}'
+                  ;;
+                aarch64)
+                  ARCH=arm64
+                  CS_GATEWAY='${CS_GATEWAY_ARM64}'
+                  CS_XAUTH='${CS_XAUTH_ARM64}'
+                  CS_XHTTP='${CS_XHTTP_ARM64}'
+                  CS_XWS='${CS_XWS_ARM64}'
+                  ;;
                 *) echo \"Unsupported arch: \$ARCH\"; exit 1 ;;
               esac
               echo \"Node arch: \$ARCH\"
@@ -199,6 +219,7 @@ jobs:
 
               nomad job run \\
                 -var arch=\"\$ARCH\" \\
+                -var checksum_gateway=\"\$CS_GATEWAY\" \\
                 -var github_repo='${{ github.repository }}' \\
                 -var version='${{ env.VERSION }}' \\
                 -var nats_user=$Q_NATS_USER \\
@@ -211,6 +232,9 @@ jobs:
 
               nomad job run \\
                 -var arch=\"\$ARCH\" \\
+                -var checksum_xauth=\"\$CS_XAUTH\" \\
+                -var checksum_xhttp=\"\$CS_XHTTP\" \\
+                -var checksum_xws=\"\$CS_XWS\" \\
                 -var github_repo='${{ github.repository }}' \\
                 -var version='${{ env.VERSION }}' \\
                 -var nats_user=$Q_NATS_USER \\

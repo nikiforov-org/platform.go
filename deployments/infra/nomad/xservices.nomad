@@ -82,6 +82,21 @@ variable "inactivity_timeout" {
   default = "3m"
 }
 
+variable "checksum_xauth" {
+  description = "SHA256 архива xauth (sha256:<hex>). Передаётся CI — защищает от подмены бинарника."
+  default     = ""
+}
+
+variable "checksum_xhttp" {
+  description = "SHA256 архива xhttp (sha256:<hex>). Передаётся CI — защищает от подмены бинарника."
+  default     = ""
+}
+
+variable "checksum_xws" {
+  description = "SHA256 архива xws (sha256:<hex>). Передаётся CI — защищает от подмены бинарника."
+  default     = ""
+}
+
 variable "log_level" {
   default = "info"
 }
@@ -123,6 +138,7 @@ job "xservices" {
       artifact {
         source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/xauth_linux_${var.arch}.tar.gz"
         destination = "local/"
+        checksum    = var.checksum_xauth
       }
 
       config {
@@ -177,6 +193,7 @@ job "xservices" {
       artifact {
         source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/xhttp_linux_${var.arch}.tar.gz"
         destination = "local/"
+        checksum    = var.checksum_xhttp
       }
 
       config {
@@ -226,6 +243,7 @@ job "xservices" {
       artifact {
         source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/xws_linux_${var.arch}.tar.gz"
         destination = "local/"
+        checksum    = var.checksum_xws
       }
 
       config {

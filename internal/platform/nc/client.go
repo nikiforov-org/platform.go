@@ -165,8 +165,9 @@ func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
 		nats.MaxReconnects(cfg.Reconnect.MaxAttempts),
 		nats.ReconnectWait(cfg.Reconnect.WaitDuration),
 
+		// Транзиентный разрыв — клиент начинает реконнект автоматически.
 		nats.DisconnectErrHandler(func(conn *nats.Conn, err error) {
-			log.Error().Err(err).Msg("NATS: соединение разорвано")
+			log.Warn().Err(err).Msg("NATS: соединение разорвано, переподключение...")
 		}),
 		nats.ReconnectHandler(func(conn *nats.Conn) {
 			log.Info().Str("url", conn.ConnectedUrl()).Msg("NATS: переподключено")
@@ -175,6 +176,15 @@ func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
 		// При MaxAttempts=-1 вызывается только при явном Close().
 		nats.ClosedHandler(func(conn *nats.Conn) {
 			log.Info().Msg("NATS: соединение закрыто окончательно")
+		}),
+		// Async-ошибки: slow consumer, auth failure, протокольные нарушения —
+		// требуют внимания оператора, логируем как ERROR.
+		nats.ErrorHandler(func(conn *nats.Conn, sub *nats.Subscription, err error) {
+			e := log.Error().Err(err)
+			if sub != nil {
+				e = e.Str("subject", sub.Subject)
+			}
+			e.Msg("NATS: async error")
 		}),
 	}
 

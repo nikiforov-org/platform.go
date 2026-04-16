@@ -45,6 +45,11 @@ variable "gateway_trusted_proxy" {
   default     = ""
 }
 
+variable "checksum_gateway" {
+  description = "SHA256 архива gateway (sha256:<hex>). Передаётся CI — защищает от подмены бинарника."
+  default     = ""
+}
+
 variable "log_level" {
   default = "info"
 }
@@ -90,6 +95,7 @@ job "platform" {
       artifact {
         source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/gateway_linux_${var.arch}.tar.gz"
         destination = "local/"
+        checksum    = var.checksum_gateway
       }
 
       config {
