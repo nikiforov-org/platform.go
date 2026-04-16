@@ -61,11 +61,6 @@ job "xhttp" {
   group "xhttp" {
     count = 1
 
-    logs {
-      max_files     = 5
-      max_file_size = 10
-    }
-
     restart {
       attempts = 10
       interval = "5m"
@@ -76,6 +71,11 @@ job "xhttp" {
     task "xhttp" {
       driver       = "raw_exec"
       kill_timeout = "30s"
+
+      logs {
+        max_files     = 5
+        max_file_size = 10
+      }
 
       artifact {
         source      = "https://github.com/${var.GITHUB_REPO}/releases/download/${var.VERSION}/xhttp_linux_${var.ARCH}.tar.gz"

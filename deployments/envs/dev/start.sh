@@ -109,6 +109,7 @@ start_nomad_cluster() {
 
     # Генерируем конфиг ноды
     cat > "$data_dir/agent.hcl" <<HCL
+name      = "node-$i"
 data_dir  = "$data_dir"
 log_level = "INFO"
 log_json  = true
@@ -190,18 +191,11 @@ deploy_jobs() {
   local bin_dir=$1
   log "Деплой джобов (локальные бинарники: $bin_dir)..."
 
-  # Считываем dev.vars в ассоциативный массив для подстановки в джобы
-  local -A v=()
-  while IFS='=' read -r key val; do
-    [[ "$key" =~ ^[[:space:]]*# ]] && continue
-    [[ -z "$key" ]] && continue
-    key="${key// /}"
-    val="${val// /}"
-    val="${val//\"/}"
-    v["$key"]="$val"
-  done < "$VARS_FILE"
+  # Загружаем dev.vars как переменные окружения.
+  # Формат файла: key = "value" → конвертируем в key="value" и eval.
+  # Совместимо с bash 3.2 (macOS).
+  eval "$(grep -v '^\s*#' "$VARS_FILE" | grep -v '^\s*$' | sed 's/[[:space:]]*=[[:space:]]*/=/')"
 
-  # platform.nomad (Gateway)
   cat > /tmp/platform-dev.nomad << NOMAD
 job "platform" {
   datacenters = ["dc1"]
@@ -216,34 +210,67 @@ job "platform" {
 
   group "gateway" {
     count = 1
-    network { port "http" { static = 8080 } }
-    logs { max_files = 5; max_file_size = 10 }
-    restart { attempts = 10; interval = "5m"; delay = "15s"; mode = "delay" }
+
+    network {
+      port "http" {
+        static = 8080
+      }
+    }
+
+    restart {
+      attempts = 10
+      interval = "5m"
+      delay    = "15s"
+      mode     = "delay"
+    }
 
     task "gateway" {
-      driver = "raw_exec"
-      config { command = "$bin_dir/gateway" }
+      driver       = "raw_exec"
+      kill_timeout = "30s"
+
+      logs {
+        max_files     = 5
+        max_file_size = 10
+      }
+
+      config {
+        command = "$bin_dir/gateway"
+      }
+
       env {
         NATS_HOST                = "127.0.0.1"
         NATS_PORT                = "4222"
-        NATS_USER                = "${v[nats_user]}"
-        NATS_PASSWORD            = "${v[nats_password]}"
+        NATS_USER                = "$nats_user"
+        NATS_PASSWORD            = "$nats_password"
         HTTP_ADDR                = ":8080"
-        ALLOWED_HOSTS            = "${v[allowed_hosts]}"
-        GATEWAY_AUTH_RATE_PREFIX = "${v[gateway_auth_rate_prefix]}"
-        LOG_LEVEL                = "${v[log_level]}"
+        ALLOWED_HOSTS            = "$allowed_hosts"
+        GATEWAY_AUTH_RATE_PREFIX = "$gateway_auth_rate_prefix"
+        LOG_LEVEL                = "$log_level"
       }
+
       service {
-        name = "gateway"; port = "http"; provider = "nomad"
-        check { name = "http-health"; type = "http"; path = "/health"; interval = "10s"; timeout = "3s" }
+        name     = "gateway"
+        port     = "http"
+        provider = "nomad"
+
+        check {
+          name     = "http-health"
+          type     = "http"
+          path     = "/health"
+          interval = "10s"
+          timeout  = "3s"
+        }
       }
-      resources { cpu = 200; memory = 64 }
+
+      resources {
+        cpu    = 200
+        memory = 64
+      }
     }
   }
 }
 NOMAD
 
-  # xservices.nomad (xauth + xhttp + xws)
   cat > /tmp/xservices-dev.nomad << NOMAD
 job "xservices" {
   datacenters = ["dc1"]
@@ -258,67 +285,127 @@ job "xservices" {
 
   group "xauth" {
     count = 1
-    logs { max_files = 5; max_file_size = 10 }
-    restart { attempts = 10; interval = "5m"; delay = "15s"; mode = "delay" }
+
+    restart {
+      attempts = 10
+      interval = "5m"
+      delay    = "15s"
+      mode     = "delay"
+    }
+
     task "xauth" {
-      driver = "raw_exec"
-      config { command = "$bin_dir/xauth" }
+      driver       = "raw_exec"
+      kill_timeout = "30s"
+
+      logs {
+        max_files     = 5
+        max_file_size = 10
+      }
+
+      config {
+        command = "$bin_dir/xauth"
+      }
+
       env {
         NATS_HOST           = "127.0.0.1"
         NATS_PORT           = "4222"
-        NATS_USER           = "${v[nats_user]}"
-        NATS_PASSWORD       = "${v[nats_password]}"
-        AUTH_USERNAME       = "${v[auth_username]}"
-        AUTH_PASSWORD       = "${v[auth_password]}"
-        AUTH_ACCESS_SECRET  = "${v[auth_access_secret]}"
-        AUTH_REFRESH_SECRET = "${v[auth_refresh_secret]}"
-        AUTH_ACCESS_TTL     = "${v[auth_access_ttl]:-15m}"
-        AUTH_REFRESH_TTL    = "${v[auth_refresh_ttl]:-168h}"
-        COOKIE_DOMAIN       = "${v[cookie_domain]}"
-        COOKIE_SECURE       = "${v[cookie_secure]:-false}"
-        LOG_LEVEL           = "${v[log_level]}"
+        NATS_USER           = "$nats_user"
+        NATS_PASSWORD       = "$nats_password"
+        AUTH_USERNAME       = "$auth_username"
+        AUTH_PASSWORD       = "$auth_password"
+        AUTH_ACCESS_SECRET  = "$auth_access_secret"
+        AUTH_REFRESH_SECRET = "$auth_refresh_secret"
+        AUTH_ACCESS_TTL     = "${auth_access_ttl:-15m}"
+        AUTH_REFRESH_TTL    = "${auth_refresh_ttl:-168h}"
+        COOKIE_DOMAIN       = "$cookie_domain"
+        COOKIE_SECURE       = "${cookie_secure:-false}"
+        LOG_LEVEL           = "$log_level"
       }
-      resources { cpu = 100; memory = 32 }
+
+      resources {
+        cpu    = 100
+        memory = 32
+      }
     }
   }
 
   group "xhttp" {
     count = 1
-    logs { max_files = 5; max_file_size = 10 }
-    restart { attempts = 10; interval = "5m"; delay = "15s"; mode = "delay" }
+
+    restart {
+      attempts = 10
+      interval = "5m"
+      delay    = "15s"
+      mode     = "delay"
+    }
+
     task "xhttp" {
-      driver = "raw_exec"
-      config { command = "$bin_dir/xhttp" }
+      driver       = "raw_exec"
+      kill_timeout = "30s"
+
+      logs {
+        max_files     = 5
+        max_file_size = 10
+      }
+
+      config {
+        command = "$bin_dir/xhttp"
+      }
+
       env {
         NATS_HOST     = "127.0.0.1"
         NATS_PORT     = "4222"
-        NATS_USER     = "${v[nats_user]}"
-        NATS_PASSWORD = "${v[nats_password]}"
-        DATABASE_URL  = "${v[database_url]}"
-        ACCESS_SECRET = "${v[access_secret]}"
-        CACHE_TTL     = "${v[cache_ttl]:-30s}"
-        LOG_LEVEL     = "${v[log_level]}"
+        NATS_USER     = "$nats_user"
+        NATS_PASSWORD = "$nats_password"
+        DATABASE_URL  = "$database_url"
+        ACCESS_SECRET = "$access_secret"
+        CACHE_TTL     = "${cache_ttl:-30s}"
+        LOG_LEVEL     = "$log_level"
       }
-      resources { cpu = 100; memory = 64 }
+
+      resources {
+        cpu    = 100
+        memory = 64
+      }
     }
   }
 
   group "xws" {
     count = 1
-    logs { max_files = 5; max_file_size = 10 }
-    restart { attempts = 10; interval = "5m"; delay = "15s"; mode = "delay" }
+
+    restart {
+      attempts = 10
+      interval = "5m"
+      delay    = "15s"
+      mode     = "delay"
+    }
+
     task "xws" {
-      driver = "raw_exec"
-      config { command = "$bin_dir/xws" }
+      driver       = "raw_exec"
+      kill_timeout = "30s"
+
+      logs {
+        max_files     = 5
+        max_file_size = 10
+      }
+
+      config {
+        command = "$bin_dir/xws"
+      }
+
       env {
         NATS_HOST          = "127.0.0.1"
         NATS_PORT          = "4222"
-        NATS_USER          = "${v[nats_user]}"
-        NATS_PASSWORD      = "${v[nats_password]}"
-        INACTIVITY_TIMEOUT = "${v[inactivity_timeout]:-3m}"
-        LOG_LEVEL          = "${v[log_level]}"
+        NATS_USER          = "$nats_user"
+        NATS_PASSWORD      = "$nats_password"
+        INACTIVITY_TIMEOUT = "${inactivity_timeout:-3m}"
+        LOG_LEVEL          = "$log_level"
       }
-      resources { cpu = 100; memory = 32 }
+
+      resources {
+        cpu    = 100
+        memory = 32
+      }
     }
   }
 }

@@ -76,11 +76,6 @@ job "gateway" {
       }
     }
 
-    logs {
-      max_files     = 5
-      max_file_size = 10
-    }
-
     restart {
       attempts = 10
       interval = "5m"
@@ -91,6 +86,11 @@ job "gateway" {
     task "gateway" {
       driver       = "raw_exec"
       kill_timeout = "30s"
+
+      logs {
+        max_files     = 5
+        max_file_size = 10
+      }
 
       artifact {
         source      = "https://github.com/${var.GITHUB_REPO}/releases/download/${var.VERSION}/gateway_linux_${var.ARCH}.tar.gz"
