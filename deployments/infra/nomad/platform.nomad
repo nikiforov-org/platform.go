@@ -83,7 +83,8 @@ job "platform" {
     }
 
     task "gateway" {
-      driver = "raw_exec"
+      driver       = "raw_exec"
+      kill_timeout = "30s"
 
       # Скачать бинарник из GitHub Releases и распаковать в local/
       artifact {

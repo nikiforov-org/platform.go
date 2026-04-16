@@ -117,7 +117,8 @@ job "xservices" {
     }
 
     task "xauth" {
-      driver = "raw_exec"
+      driver       = "raw_exec"
+      kill_timeout = "30s"
 
       artifact {
         source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/xauth_linux_${var.arch}.tar.gz"
@@ -170,7 +171,8 @@ job "xservices" {
     }
 
     task "xhttp" {
-      driver = "raw_exec"
+      driver       = "raw_exec"
+      kill_timeout = "30s"
 
       artifact {
         source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/xhttp_linux_${var.arch}.tar.gz"
@@ -218,7 +220,8 @@ job "xservices" {
     }
 
     task "xws" {
-      driver = "raw_exec"
+      driver       = "raw_exec"
+      kill_timeout = "30s"
 
       artifact {
         source      = "https://github.com/${var.github_repo}/releases/download/${var.version}/xws_linux_${var.arch}.tar.gz"

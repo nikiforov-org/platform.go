@@ -65,7 +65,8 @@ func main() {
 	<-stop
 
 	log.Info().Msg("завершение работы...")
-	if err := natsClient.Drain(5 * time.Second); err != nil {
+	drainTimeout := utils.GetEnv("NATS_DRAIN_TIMEOUT", 15*time.Second)
+	if err := natsClient.Drain(drainTimeout); err != nil {
 		log.Error().Err(err).Msg("NATS drain")
 	}
 }
