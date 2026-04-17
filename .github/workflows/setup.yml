@@ -27,10 +27,6 @@ on:
       platform_domain:
         description: 'Домен A-записей кластера (например: nodes.example.com)'
         required: true
-      install_postgres:
-        description: 'Установить PostgreSQL (true/false)'
-        default: 'false'
-        required: false
 
 jobs:
   setup:
@@ -49,6 +45,9 @@ jobs:
           chmod 600 ~/.ssh/setup_key
 
       # Формируем env-файл с секретами. GitHub маскирует значения в логах.
+      # Все user-controlled inputs идут через env-секцию, а не прямую
+      # ${{ }}-интерполяцию в bash — закрывает script injection (heredoc <<EOF
+      # без кавычек выполняет $() из подставленного значения).
       - name: Write setup env
         env:
           NATS_USER: ${{ secrets.NATS_USER }}
@@ -56,34 +55,37 @@ jobs:
           NATS_CA_KEY: ${{ secrets.NATS_CA_KEY }}
           NATS_CA_CERT: ${{ secrets.NATS_CA_CERT }}
           NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
+          PLATFORM_DOMAIN: ${{ inputs.platform_domain }}
+          REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
           cat > /tmp/setup_env << EOF
-          PLATFORM_DOMAIN="${{ inputs.platform_domain }}"
+          PLATFORM_DOMAIN="${PLATFORM_DOMAIN}"
           NATS_USER="${NATS_USER}"
           NATS_PASSWORD="${NATS_PASSWORD}"
           NATS_CA_KEY="$(printf '%s' "${NATS_CA_KEY}" | base64 -w0)"
           NATS_CA_CERT="$(printf '%s' "${NATS_CA_CERT}" | base64 -w0)"
           NOMAD_TOKEN="${NOMAD_TOKEN}"
-          REPO_URL="https://github.com/${{ github.repository }}.git"
-          INSTALL_POSTGRES="${{ inputs.install_postgres }}"
+          REPO_URL="${REPO_URL}"
           EOF
           chmod 600 /tmp/setup_env
 
       - name: Copy setup files
         env:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          NODE_IP: ${{ inputs.node_ip }}
         run: |
           SCP="scp -i ~/.ssh/setup_key -o StrictHostKeyChecking=no"
           $SCP /tmp/setup_env \
             deployments/envs/prod/setup.sh \
-            "${DEPLOY_USER}@${{ inputs.node_ip }}:/tmp/"
+            "${DEPLOY_USER}@${NODE_IP}:/tmp/"
 
       - name: Run setup.sh
         env:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          NODE_IP: ${{ inputs.node_ip }}
         run: |
           SSH="ssh -i ~/.ssh/setup_key -o StrictHostKeyChecking=no -o BatchMode=yes"
-          $SSH "${DEPLOY_USER}@${{ inputs.node_ip }}" '
+          $SSH "${DEPLOY_USER}@${NODE_IP}" '
             sudo bash -c "set -a; . /tmp/setup_env; set +a; bash /tmp/setup.sh"
             rm -f /tmp/setup_env /tmp/setup.sh
           '

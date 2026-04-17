@@ -15,6 +15,7 @@
 package middleware
 
 import (
+	"encoding/json"
 	"time"
 
 	"platform/internal/services/xauth"
@@ -84,7 +85,10 @@ func replyUnauthorized(msg *nats.Msg, text string) {
 	out := nats.NewMsg(msg.Reply)
 	out.Header.Set("Content-Type", "application/json")
 	out.Header.Set("Status", "401")
-	out.Data = []byte(`{"error":"` + text + `"}`)
+	// json.Marshal безошибочен для struct{string} — игнорируем error.
+	out.Data, _ = json.Marshal(struct {
+		Error string `json:"error"`
+	}{Error: text})
 
 	if err := msg.RespondMsg(out); err != nil {
 		// Логировать некуда — функция не имеет доступа к логгеру.

@@ -346,6 +346,18 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 		return
 	}
 
+	// Генерируем sessionID (8 байт = 16 hex) ДО Upgrade: при сбое CSPRNG
+	// отвечаем обычным HTTP 500. После Upgrade соединение уже WebSocket —
+	// корректное закрытие требовало бы отдельного CloseMessage по RFC 6455.
+	sidRaw := make([]byte, 8)
+	if _, err := rand.Read(sidRaw); err != nil {
+		releaseConn()
+		gw.log.Error().Err(err).Str("service", service).Msg("ошибка генерации session ID")
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	sessionID := fmt.Sprintf("%x", sidRaw)
+
 	conn, err := gw.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		// upgrader сам пишет HTTP-ошибку; логируем только для диагностики.
@@ -354,15 +366,6 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 		return
 	}
 	defer releaseConn()
-
-	// Генерируем уникальный ID сессии (8 байт = 16 hex-символов).
-	sidRaw := make([]byte, 8)
-	if _, err := rand.Read(sidRaw); err != nil {
-		gw.log.Error().Err(err).Msg("ошибка генерации session ID")
-		conn.Close()
-		return
-	}
-	sessionID := fmt.Sprintf("%x", sidRaw)
 
 	// Наследуемся от gw.ctx: при shutdown сервера все WS-сессии отменяются.
 	ctx, cancel := context.WithCancel(gw.ctx)

@@ -14,6 +14,7 @@
 package gateway
 
 import (
+	"container/list"
 	"net"
 	"net/http"
 	"strings"
@@ -26,17 +27,35 @@ import (
 )
 
 // ipEntry — запись в таблице per-IP limiters.
+// elem указывает на собственный node в LRU-списке таблицы:
+// при доступе нода передвигается в front, при переполнении удаляется back.
 type ipEntry struct {
 	limiter  *rate.Limiter
 	lastSeen time.Time
+	elem     *list.Element
+}
+
+// ipTable — LRU-таблица per-IP limiters: map для O(1) lookup, list для
+// O(1) eviction. Инвариант: len(m) == lst.Len(); порядок lst соответствует
+// порядку lastSeen — back имеет минимальный lastSeen, front — максимальный.
+type ipTable struct {
+	m   map[string]*ipEntry
+	lst *list.List // Value каждого элемента — string (ip)
+}
+
+func newIPTable() *ipTable {
+	return &ipTable{
+		m:   make(map[string]*ipEntry),
+		lst: list.New(),
+	}
 }
 
 // rl — rate limiter Gateway.
 // Хранит две независимые таблицы: общую и для auth-маршрутов.
 type rl struct {
 	mu      sync.Mutex
-	general map[string]*ipEntry // общий лимит
-	auth    map[string]*ipEntry // дополнительный жёсткий лимит для настраиваемого URL-префикса
+	general *ipTable // общий лимит
+	auth    *ipTable // дополнительный жёсткий лимит для настраиваемого URL-префикса
 
 	cfg     RateLimitConfig
 	wsConns atomic.Int64 // текущее число WS-соединений
@@ -47,8 +66,8 @@ type rl struct {
 // stop — канал завершения; закрывается при штатной остановке Gateway.
 func newRateLimiter(cfg RateLimitConfig, log zerolog.Logger, stop <-chan struct{}) *rl {
 	r := &rl{
-		general: make(map[string]*ipEntry),
-		auth:    make(map[string]*ipEntry),
+		general: newIPTable(),
+		auth:    newIPTable(),
 		cfg:     cfg,
 		log:     log,
 	}
@@ -67,37 +86,37 @@ func (r *rl) allowAuth(ip string) bool {
 }
 
 // get возвращает limiter для IP, создавая его при первом обращении.
-// Если таблица достигла MaxIPs — перед добавлением вытесняется самая старая запись.
-func (r *rl) get(table map[string]*ipEntry, ip string, ratePerSec float64, burst int) *rate.Limiter {
+// Hit: запись передвигается в front LRU-списка, lastSeen обновляется — O(1).
+// Miss при заполненной таблице (>=MaxIPs): из back удаляется самый давно
+// использованный IP — O(1) вместо линейного скана. Под DDoS с уникальных
+// IP это снимает self-amplification: каждый запрос тратит микросекунды
+// под mu независимо от размера таблицы.
+func (r *rl) get(table *ipTable, ip string, ratePerSec float64, burst int) *rate.Limiter {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	e, ok := table[ip]
-	if !ok {
-		if len(table) >= r.cfg.MaxIPs {
-			r.evictOldest(table)
-		}
-		e = &ipEntry{limiter: rate.NewLimiter(rate.Limit(ratePerSec), burst)}
-		table[ip] = e
+	now := time.Now()
+	if e, ok := table.m[ip]; ok {
+		e.lastSeen = now
+		table.lst.MoveToFront(e.elem)
+		return e.limiter
 	}
-	e.lastSeen = time.Now()
-	return e.limiter
-}
 
-// evictOldest удаляет запись с наиболее давним lastSeen из таблицы.
-// Вызывается только когда таблица достигла MaxIPs; вызывающий держит mu.
-func (r *rl) evictOldest(table map[string]*ipEntry) {
-	var oldestIP string
-	var oldestTime time.Time
-	for ip, e := range table {
-		if oldestIP == "" || e.lastSeen.Before(oldestTime) {
-			oldestIP = ip
-			oldestTime = e.lastSeen
+	if len(table.m) >= r.cfg.MaxIPs {
+		if oldest := table.lst.Back(); oldest != nil {
+			oldIP := oldest.Value.(string)
+			table.lst.Remove(oldest)
+			delete(table.m, oldIP)
 		}
 	}
-	if oldestIP != "" {
-		delete(table, oldestIP)
+
+	e := &ipEntry{
+		limiter:  rate.NewLimiter(rate.Limit(ratePerSec), burst),
+		lastSeen: now,
 	}
+	e.elem = table.lst.PushFront(ip)
+	table.m[ip] = e
+	return e.limiter
 }
 
 // cleanup удаляет неактивные записи каждую минуту.
@@ -111,20 +130,31 @@ func (r *rl) cleanup(stop <-chan struct{}) {
 		case <-ticker.C:
 			r.mu.Lock()
 			cutoff := time.Now().Add(-5 * time.Minute)
-			for ip, e := range r.general {
-				if e.lastSeen.Before(cutoff) {
-					delete(r.general, ip)
-				}
-			}
-			for ip, e := range r.auth {
-				if e.lastSeen.Before(cutoff) {
-					delete(r.auth, ip)
-				}
-			}
+			r.cleanupExpired(r.general, cutoff)
+			r.cleanupExpired(r.auth, cutoff)
 			r.mu.Unlock()
 		case <-stop:
 			return
 		}
+	}
+}
+
+// cleanupExpired удаляет с конца LRU-списка все записи с lastSeen < cutoff.
+// Back-walk: первая неэкспирированная запись с конца → все более ранние
+// тоже свежие (инвариант сортировки). O(K) для K реально просроченных
+// вместо O(N). Вызывающий держит r.mu.
+func (r *rl) cleanupExpired(table *ipTable, cutoff time.Time) {
+	for {
+		oldest := table.lst.Back()
+		if oldest == nil {
+			return
+		}
+		ip := oldest.Value.(string)
+		if !table.m[ip].lastSeen.Before(cutoff) {
+			return
+		}
+		table.lst.Remove(oldest)
+		delete(table.m, ip)
 	}
 }
 

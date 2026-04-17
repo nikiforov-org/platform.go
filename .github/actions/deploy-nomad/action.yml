@@ -34,9 +34,14 @@ runs:
         NOMAD_FILE: ${{ inputs.nomad_file }}
         DEPLOY_VERSION: ${{ inputs.version }}
       run: |
-        echo "$DEPLOY_SSH_KEY" > /tmp/deploy_key
-        chmod 600 /tmp/deploy_key
-        SSH="ssh -i /tmp/deploy_key \
+        # mktemp создаёт файл атомарно с режимом 0600 и уникальным именем —
+        # нет race-окна на правах между созданием и chmod, нет symlink-attack
+        # на /tmp. trap EXIT гарантирует cleanup на любом пути выхода (ошибка,
+        # сигнал), а не только при штатном rm -f в конце скрипта.
+        KEY_FILE=$(mktemp)
+        trap 'rm -f "$KEY_FILE"' EXIT
+        echo "$DEPLOY_SSH_KEY" > "$KEY_FILE"
+        SSH="ssh -i $KEY_FILE \
           -o StrictHostKeyChecking=no \
           -o BatchMode=yes \
           -o ConnectTimeout=10 \
@@ -72,8 +77,11 @@ runs:
           CS_VAR="CS_${SVC_UPPER}_$(echo $ARCH | tr '[:lower:]' '[:upper:]')"
           CHECKSUM_VALUE="${!CS_VAR}"
 
-          # Строим -var аргументы из переменных объявленных в .nomad файле.
-          VAR_ARGS=""
+          # Собираем NOMAD_VAR_* env-vars для передачи в nomad job run.
+          # Nomad нативно читает переменные из env с префиксом NOMAD_VAR_;
+          # значения попадают в /proc/<pid>/environ (читаемо только владельцем),
+          # в отличие от -var флагов, которые видны в world-readable cmdline.
+          ENV_EXPORTS=""
           for VAR in $DECLARED; do
             case "$VAR" in
               ARCH)        VAL="$ARCH" ;;
@@ -82,7 +90,7 @@ runs:
               VERSION)     VAL="$DEPLOY_VERSION" ;;
               *)           VAL="${!VAR}" ;;
             esac
-            VAR_ARGS="$VAR_ARGS -var ${VAR}=$(printf '%q' "$VAL")"
+            ENV_EXPORTS="${ENV_EXPORTS}export NOMAD_VAR_${VAR}=$(printf '%q' "$VAL")"$'\n'
           done
 
           Q_NOMAD_TOKEN=$(printf '%q' "$NOMAD_TOKEN")
@@ -90,15 +98,14 @@ runs:
           if $SSH "${DEPLOY_USER}@${HOST}" "
             set -e
             export NOMAD_TOKEN=$Q_NOMAD_TOKEN
-
+            ${ENV_EXPORTS}
             if [ -d /opt/platform/.git ]; then
               git -C /opt/platform pull
             else
               git clone '$REPO_URL' /opt/platform
             fi
 
-            nomad job run $VAR_ARGS \
-              /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
+            nomad job run /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
           "; then
             echo "Deployed ${NOMAD_FILE} successfully via $HOST"
             DEPLOYED=true
@@ -108,5 +115,4 @@ runs:
           fi
         done
 
-        rm -f /tmp/deploy_key
         $DEPLOYED || { echo "All nodes failed, deploy of ${NOMAD_FILE} aborted"; exit 1; }

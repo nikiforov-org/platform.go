@@ -64,27 +64,41 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
+	// Ошибка сервера направляется в канал, а не в log.Fatal — иначе os.Exit(1)
+	// в горутине обошёл бы close(stopCh), server.Shutdown и NATS Drain ниже,
+	// потеряв in-flight запросы и оставив WS-сессии без close-фреймов.
+	serverErr := make(chan error, 1)
 	go func() {
 		log.Info().Str("addr", server.Addr).Msg("запущен")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal().Err(err).Msg("ошибка сервера")
+			serverErr <- err
 		}
 	}()
 
-	<-stop
-	log.Info().Msg("завершение работы...")
+	var exitCode int
+	select {
+	case <-stop:
+		log.Info().Msg("завершение работы...")
+	case err := <-serverErr:
+		log.Error().Err(err).Msg("ошибка сервера, инициируем shutdown")
+		exitCode = 1
+	}
 	close(stopCh) // останавливает фоновые горутины Gateway
 
 	// Останавливаем HTTP: новые запросы не принимаются.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("ошибка HTTP Shutdown")
 	}
+	cancel() // явно — defer не сработает после os.Exit ниже
 
 	// Дренируем NATS: in-flight запросы завершаются, буфер сбрасывается.
 	drainTimeout := utils.GetEnv("NATS_DRAIN_TIMEOUT", 15*time.Second)
 	if err := natsClient.Drain(drainTimeout); err != nil {
 		log.Error().Err(err).Msg("NATS drain")
+	}
+
+	if exitCode != 0 {
+		os.Exit(exitCode)
 	}
 }

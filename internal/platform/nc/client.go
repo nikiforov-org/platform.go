@@ -20,6 +20,10 @@ type PlatformClient struct {
 	Conn *nats.Conn
 	JS   jetstream.JetStream
 	log  zerolog.Logger
+	// closed закрывается из nats.ClosedHandler — единственная точка
+	// финальной фиксации закрытия соединения. Drain ждёт его вместо
+	// poll'инга IsClosed() — event-driven, нулевая задержка детекта.
+	closed chan struct{}
 }
 
 // Config — полная конфигурация подключения к NATS.
@@ -161,6 +165,8 @@ func (c Config) url() string {
 //
 // При любой ошибке после шага 1 соединение закрывается — утечки соединения не будет.
 func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
+	closed := make(chan struct{})
+
 	opts := []nats.Option{
 		nats.MaxReconnects(cfg.Reconnect.MaxAttempts),
 		nats.ReconnectWait(cfg.Reconnect.WaitDuration),
@@ -174,8 +180,10 @@ func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
 		}),
 		// ClosedHandler срабатывает после исчерпания всех попыток реконнекта.
 		// При MaxAttempts=-1 вызывается только при явном Close().
+		// close(closed) — сигнал для Drain, ждущего event-driven завершения.
 		nats.ClosedHandler(func(conn *nats.Conn) {
 			log.Info().Msg("NATS: соединение закрыто окончательно")
+			close(closed)
 		}),
 		// Async-ошибки: slow consumer, auth failure, протокольные нарушения —
 		// требуют внимания оператора, логируем как ERROR.
@@ -207,9 +215,10 @@ func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
 	}
 
 	client := &PlatformClient{
-		Conn: nc,
-		JS:   js,
-		log:  log,
+		Conn:   nc,
+		JS:     js,
+		log:    log,
+		closed: closed,
 	}
 
 	if cfg.KV.BucketName != "" {
@@ -332,13 +341,13 @@ func (p *PlatformClient) Drain(timeout time.Duration) error {
 	if err := p.Conn.Drain(); err != nil {
 		return fmt.Errorf("nats: drain: %w", err)
 	}
-	deadline := time.Now().Add(timeout)
-	for !p.Conn.IsClosed() {
-		if time.Now().After(deadline) {
-			p.Conn.Close()
-			return fmt.Errorf("nats: drain превысил таймаут %s, соединение закрыто принудительно", timeout)
-		}
-		time.Sleep(50 * time.Millisecond)
+	select {
+	case <-p.closed:
+		return nil
+	case <-time.After(timeout):
+		// Hard close: ClosedHandler всё равно отработает и закроет p.closed,
+		// но мы уже не ждём — возвращаем ошибку таймаута сразу.
+		p.Conn.Close()
+		return fmt.Errorf("nats: drain превысил таймаут %s, соединение закрыто принудительно", timeout)
 	}
-	return nil
 }
