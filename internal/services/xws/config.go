@@ -6,6 +6,8 @@ import (
 
 	"platform/internal/platform/nc"
 	"platform/utils"
+
+	"github.com/rs/zerolog"
 )
 
 // Config — конфигурация сервиса xws.
@@ -23,16 +25,16 @@ type Config struct {
 }
 
 // LoadConfig читает конфигурацию из переменных окружения.
-func LoadConfig() Config {
+func LoadConfig(log zerolog.Logger) Config {
 	natsCfg := nc.DefaultConfig()
-	natsCfg.Server.Host = utils.GetEnv("NATS_HOST", natsCfg.Server.Host)
-	natsCfg.Server.ClientPort = utils.GetEnv("NATS_PORT", natsCfg.Server.ClientPort)
-	natsCfg.Auth.User = utils.GetEnv("NATS_USER", "")
-	natsCfg.Auth.Password = utils.GetEnv("NATS_PASSWORD", "")
+	natsCfg.Server.Host = utils.GetEnv(log, "NATS_HOST", natsCfg.Server.Host)
+	natsCfg.Server.ClientPort = utils.GetEnv(log, "NATS_PORT", natsCfg.Server.ClientPort)
+	natsCfg.Auth.User = utils.GetEnv(log, "NATS_USER", "")
+	natsCfg.Auth.Password = utils.GetEnv(log, "NATS_PASSWORD", "")
 	natsCfg.KV.BucketName = "" // xws не использует KV-хранилище.
 
 	return Config{
 		NATS:              natsCfg,
-		InactivityTimeout: utils.GetEnv("INACTIVITY_TIMEOUT", 3*time.Minute),
+		InactivityTimeout: utils.GetEnv(log, "INACTIVITY_TIMEOUT", 3*time.Minute),
 	}
 }

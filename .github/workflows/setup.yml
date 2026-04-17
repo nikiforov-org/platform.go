@@ -27,6 +27,10 @@ on:
       platform_domain:
         description: 'Домен A-записей кластера (например: nodes.example.com)'
         required: true
+      host_fingerprint:
+        description: 'SSH host fingerprint новой ноды в формате SHA256:abc123... Получить из консоли/системного лога провайдера. Пусто — TOFU без MITM-защиты (см. лог workflow).'
+        required: false
+        default: ''
 
 jobs:
   setup:
@@ -39,10 +43,38 @@ jobs:
       - name: Configure SSH
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          NODE_IP: ${{ inputs.node_ip }}
+          HOST_FINGERPRINT: ${{ inputs.host_fingerprint }}
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           echo "$DEPLOY_SSH_KEY" > ~/.ssh/setup_key
           chmod 600 ~/.ssh/setup_key
+
+          # Получаем host keys целевой ноды через ssh-keyscan и помещаем в known_hosts.
+          # Если HOST_FINGERPRINT задан — верифицируем (защита от MITM первого
+          # подключения, утечка NATS_CA_KEY/NOMAD_TOKEN на чужой эндпоинт исключена).
+          # Если пуст — TOFU: первый ключ принимаем, fingerprint выводится в лог
+          # для последующей сверки оператором.
+          ssh-keyscan -t ed25519,ecdsa,rsa "$NODE_IP" > /tmp/host_keys 2>/dev/null
+          [ -s /tmp/host_keys ] || { echo "ssh-keyscan: пустой ответ от $NODE_IP"; exit 1; }
+
+          echo "Host key fingerprint(s) для $NODE_IP:"
+          ssh-keygen -lf /tmp/host_keys
+
+          if [ -n "$HOST_FINGERPRINT" ]; then
+            if ! ssh-keygen -lf /tmp/host_keys | awk '{print $2}' | grep -qFx "$HOST_FINGERPRINT"; then
+              echo "FAIL: ни один host key не совпал с ожидаемым fingerprint $HOST_FINGERPRINT"
+              exit 1
+            fi
+            echo "OK: host fingerprint подтверждён"
+          else
+            echo "WARN: host_fingerprint не задан — TOFU режим, MITM первого подключения не отслеживается."
+            echo "      Сверьте fingerprint выше с консолью провайдера; при следующих запусках задавайте host_fingerprint."
+          fi
+
+          cat /tmp/host_keys >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       # Формируем env-файл с секретами. GitHub маскирует значения в логах.
       # Все user-controlled inputs идут через env-секцию, а не прямую
@@ -74,7 +106,9 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           NODE_IP: ${{ inputs.node_ip }}
         run: |
-          SCP="scp -i ~/.ssh/setup_key -o StrictHostKeyChecking=no"
+          # StrictHostKeyChecking=yes — host keys уже в known_hosts (см. Configure SSH);
+          # неизвестный/изменённый ключ → отказ (вместо «принять любой»).
+          SCP="scp -i ~/.ssh/setup_key -o StrictHostKeyChecking=yes"
           $SCP /tmp/setup_env \
             deployments/envs/prod/setup.sh \
             "${DEPLOY_USER}@${NODE_IP}:/tmp/"
@@ -84,7 +118,7 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           NODE_IP: ${{ inputs.node_ip }}
         run: |
-          SSH="ssh -i ~/.ssh/setup_key -o StrictHostKeyChecking=no -o BatchMode=yes"
+          SSH="ssh -i ~/.ssh/setup_key -o StrictHostKeyChecking=yes -o BatchMode=yes"
           $SSH "${DEPLOY_USER}@${NODE_IP}" '
             sudo bash -c "set -a; . /tmp/setup_env; set +a; bash /tmp/setup.sh"
             rm -f /tmp/setup_env /tmp/setup.sh
@@ -92,4 +126,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: rm -f ~/.ssh/setup_key /tmp/setup_env
+        run: rm -f ~/.ssh/setup_key /tmp/setup_env /tmp/host_keys

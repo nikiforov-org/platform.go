@@ -22,10 +22,9 @@ import (
 
 func main() {
 	log := logger.New("gateway")
-	utils.SetLogger(log)
 
 	// 1. Конфигурация из переменных окружения.
-	cfg, err := gateway.LoadConfig()
+	cfg, err := gateway.LoadConfig(log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("ошибка конфигурации")
 	}
@@ -93,7 +92,7 @@ func main() {
 	cancel() // явно — defer не сработает после os.Exit ниже
 
 	// Дренируем NATS: in-flight запросы завершаются, буфер сбрасывается.
-	drainTimeout := utils.GetEnv("NATS_DRAIN_TIMEOUT", 15*time.Second)
+	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 15*time.Second)
 	if err := natsClient.Drain(drainTimeout); err != nil {
 		log.Error().Err(err).Msg("NATS drain")
 	}

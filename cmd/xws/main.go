@@ -33,8 +33,7 @@ import (
 
 func main() {
 	log := logger.New("xws")
-	utils.SetLogger(log)
-	cfg := xws.LoadConfig()
+	cfg := xws.LoadConfig(log)
 
 	natsClient, err := nc.NewClient(cfg.NATS, log)
 	if err != nil {
@@ -64,6 +63,11 @@ func main() {
 			sid = req.SID
 		}
 		mgr.Open(sid)
+		// Ack для Gateway: подтверждаем регистрацию сессии. Без ack Gateway
+		// закроет WS-соединение по таймауту (GATEWAY_WS_CONNECT_TIMEOUT).
+		if err := msg.Respond(nil); err != nil {
+			log.Warn().Err(err).Str("sid", sid).Msg("connect ack failed")
+		}
 	}))
 	if err != nil {
 		log.Fatal().Err(err).Str("subject", connectSubject).Msg("QueueSubscribe")
@@ -80,7 +84,7 @@ func main() {
 	// Закрываем активные WS-сессии до дрейна: NATS-подписки сессий отписываются,
 	// клиентам отправляется Control: CLOSE.
 	mgr.CloseAll()
-	drainTimeout := utils.GetEnv("NATS_DRAIN_TIMEOUT", 15*time.Second)
+	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 15*time.Second)
 	if err := natsClient.Drain(drainTimeout); err != nil {
 		log.Error().Err(err).Msg("NATS drain")
 	}

@@ -27,8 +27,7 @@ import (
 
 func main() {
 	log := logger.New("xauth")
-	utils.SetLogger(log)
-	cfg := xauth.LoadConfig()
+	cfg := xauth.LoadConfig(log)
 
 	natsClient, err := nc.NewClient(cfg.NATS, log)
 	if err != nil {
@@ -65,7 +64,7 @@ func main() {
 	<-stop
 
 	log.Info().Msg("завершение работы...")
-	drainTimeout := utils.GetEnv("NATS_DRAIN_TIMEOUT", 15*time.Second)
+	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 15*time.Second)
 	if err := natsClient.Drain(drainTimeout); err != nil {
 		log.Error().Err(err).Msg("NATS drain")
 	}

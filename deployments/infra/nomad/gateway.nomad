@@ -57,7 +57,12 @@ variable "LOG_LEVEL" {
 
 job "gateway" {
   datacenters = ["dc1"]
-  type        = "service"
+  # type = "system" — один alloc на каждую client-ноду. Static port :8080 +
+  # DNS RR через PLATFORM_DOMAIN требуют gateway на всех нодах: при count=1
+  # N-1 нод отвечали бы connection refused. Rolling update идёт по одной ноде
+  # за раз (max_parallel=1) — окно недоступности только на обновляемой,
+  # остальные продолжают принимать трафик.
+  type = "system"
 
   update {
     max_parallel      = 1
@@ -68,8 +73,6 @@ job "gateway" {
   }
 
   group "gateway" {
-    count = 1
-
     network {
       port "http" {
         static = 8080
@@ -85,6 +88,7 @@ job "gateway" {
 
     task "gateway" {
       driver       = "raw_exec"
+      user         = "nomad" # I-H6: task от непривилегированного user'а, не от root
       kill_timeout = "30s"
 
       logs {
@@ -95,7 +99,10 @@ job "gateway" {
       artifact {
         source      = "https://github.com/${var.GITHUB_REPO}/releases/download/${var.VERSION}/gateway_linux_${var.ARCH}.tar.gz"
         destination = "local/"
-        checksum    = var.CHECKSUM
+
+        options {
+          checksum = var.CHECKSUM
+        }
       }
 
       config {

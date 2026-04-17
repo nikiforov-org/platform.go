@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,10 @@ const wsReadDeadline = 60 * time.Second
 // wsPingInterval — интервал отправки Ping-фреймов клиенту.
 // Должен быть меньше wsReadDeadline, чтобы Pong успел вернуться вовремя.
 const wsPingInterval = 30 * time.Second
+
+// wsReadLimit — максимальный размер одного входящего WS-сообщения.
+// Без него gorilla читает фреймы любого размера → memory-DoS.
+const wsReadLimit = 64 * 1024
 
 // =============================================================================
 // Gateway
@@ -74,7 +79,7 @@ func New(natsClient *nc.PlatformClient, cfg Config, log zerolog.Logger, stop <-c
 	}
 	gw.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return cfg.AllowedHosts.Allows(r.Header.Get("Origin"))
+			return cfg.AllowedHosts.Allows(log, r.Header.Get("Origin"))
 		},
 	}
 	return gw
@@ -115,19 +120,26 @@ func (gw *Gateway) Handler() http.Handler {
 func (gw *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	// Ошибки w.Write игнорируем намеренно: WriteHeader уже улетел, второй ответ
+	// не послать; разрыв TCP клиентом для healthcheck — обычное дело.
 	if gw.nats.Conn.IsConnected() {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok","nats":"connected"}`))
+		_, _ = w.Write([]byte(`{"status":"ok","nats":"connected"}`))
 		return
 	}
 
 	w.WriteHeader(http.StatusServiceUnavailable)
-	w.Write([]byte(`{"status":"error","nats":"disconnected"}`))
+	_, _ = w.Write([]byte(`{"status":"error","nats":"disconnected"}`))
 }
 
 // =============================================================================
 // Маршрутизация
 // =============================================================================
+
+// validSubjectToken — допустимые символы в одном сегменте URL после /v1/.
+// Эти сегменты идут в NATS subject; `*`/`>` — wildcards, пробел/control bytes —
+// невалидные subject-токены. Whitelist предотвращает инъекцию в маршрутизацию.
+var validSubjectToken = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // middlewareOrigin проверяет заголовок Origin для входящих HTTP-запросов.
 //
@@ -140,7 +152,7 @@ func (gw *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (gw *Gateway) middlewareOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && !gw.allowedHosts.Allows(origin) {
+		if origin != "" && !gw.allowedHosts.Allows(gw.log, origin) {
 			gw.log.Warn().Str("origin", origin).Str("method", r.Method).Str("path", r.URL.Path).Msg("отклонён Origin")
 			http.Error(w, "origin not allowed", http.StatusForbidden)
 			return
@@ -160,13 +172,23 @@ func (gw *Gateway) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	service := parts[1]
-	if service == "" {
-		http.Error(w, "service name is required", http.StatusBadRequest)
-		return
+	// Все сегменты после /v1/ идут в NATS subject — валидируем единым правилом.
+	// Покрывает и service, и methodParts; в WS-ветке последний токен "ws" проходит regex.
+	for _, p := range parts[1:] {
+		if !validSubjectToken.MatchString(p) {
+			http.Error(w, "invalid path segment", http.StatusBadRequest)
+			return
+		}
 	}
+	service := parts[1]
 
 	if parts[len(parts)-1] == "ws" {
+		// RFC 6455 §4.1: WebSocket handshake требует GET.
+		// Отбиваем до wsConnGuard/Upgrade, чтобы невалидный метод не резервировал слот.
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		gw.handleWS(w, r, service)
 		return
 	}
@@ -367,10 +389,12 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 	}
 	defer releaseConn()
 
+	conn.SetReadLimit(wsReadLimit)
+
 	// Наследуемся от gw.ctx: при shutdown сервера все WS-сессии отменяются.
 	ctx, cancel := context.WithCancel(gw.ctx)
 
-	// mu защищает ВСЕ обращения к conn (Write, Close) от гонок между:
+	// mu защищает ВСЕ обращения к conn (Write, Close, SetReadDeadline) от гонок между:
 	//   - горутиной Ping,
 	//   - NATS-коллбэком подписки .out.{sid},
 	//   - shutdown-горутиной,
@@ -379,6 +403,11 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 	// параллельно с закрытием. ctx.Done() под тем же mu — барьер от записи в уже
 	// отменённую сессию.
 	var mu sync.Mutex
+
+	// wg ждёт завершения побочных горутин (Ping, shutdown) до conn.Close.
+	// Без него горутина может оказаться в safeWrite/safeSetReadDeadline после Close —
+	// формально race по go race detector, плюс ссылки на conn/ctx удерживаются дольше handleWS.
+	var wg sync.WaitGroup
 
 	safeWrite := func(msgType int, data []byte) error {
 		mu.Lock()
@@ -392,15 +421,32 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 		return conn.WriteMessage(msgType, data)
 	}
 
-	// Объединённый cancel + close. Порядок важен:
+	// safeSetReadDeadline — синхронизированная установка ReadDeadline под mu.
+	// Используется shutdown-горутиной для прерывания блокирующего ReadMessage:
+	// без mu вызов мог идти параллельно с conn.Close из основного defer.
+	safeSetReadDeadline := func(t time.Time) error {
+		mu.Lock()
+		defer mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		return conn.SetReadDeadline(t)
+	}
+
+	// Объединённый cancel + wait + close. Порядок важен:
 	//   1. cancel() — сигнал всем горутинам (Ping, shutdown, NATS callback),
-	//      safeWrite после этого вернётся без записи.
-	//   2. mu.Lock() — ждём завершения текущего WriteMessage, если в полёте.
-	//   3. conn.Close() — финальное закрытие WS-соединения.
+	//      safeWrite/safeSetReadDeadline после этого вернутся без обращения к conn.
+	//   2. wg.Wait() — ждём завершения Ping и shutdown горутин, чтобы они не оказались
+	//      в полёте уже после conn.Close.
+	//   3. mu.Lock() — ждём завершения текущего WriteMessage из NATS-коллбэка, если в полёте.
+	//   4. conn.Close() — финальное закрытие WS-соединения.
 	// defer срабатывает ПОСЛЕ defer sub.Unsubscribe() (LIFO): сначала отписка от NATS,
-	// чтобы новые коллбэки не стартовали, потом cancel → закрытие.
+	// чтобы новые коллбэки не стартовали, потом cancel → wait → закрытие.
 	defer func() {
 		cancel()
+		wg.Wait()
 		mu.Lock()
 		defer mu.Unlock()
 		_ = conn.Close()
@@ -414,7 +460,11 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 
 	baseSubject := fmt.Sprintf("api.v1.%s.ws", service)
 
-	// Уведомляем микросервис об открытии новой WS-сессии.
+	// Уведомляем микросервис об открытии новой WS-сессии и ждём ack.
+	// Request-Reply вместо Publish: при отсутствии подписчика (сервис не запущен,
+	// scale-to-zero) NATS возвращает ErrNoResponders мгновенно, при перегрузке —
+	// DeadlineExceeded по WSConnectTimeout. В обоих случаях клиенту отправляется
+	// WS Close 1011, чтобы он не висел с «зомби»-сессией до wsReadDeadline.
 	// Куки из HTTP-запроса апгрейда передаются в заголовке — микросервис
 	// может прочитать access_token для аутентификации соединения.
 	connectMsg := nats.NewMsg(baseSubject + ".connect")
@@ -422,8 +472,17 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 	if cookie := r.Header.Get("Cookie"); cookie != "" {
 		connectMsg.Header.Set("Cookie", cookie)
 	}
-	if err := gw.nats.Conn.PublishMsg(connectMsg); err != nil {
-		gw.log.Error().Err(err).Str("sid", sessionID).Msg("WS connect publish error")
+	connectCtx, connectCancel := context.WithTimeout(ctx, gw.cfg.HTTP.WSConnectTimeout)
+	_, err = gw.nats.Conn.RequestMsgWithContext(connectCtx, connectMsg)
+	connectCancel()
+	if err != nil {
+		event := gw.log.Error()
+		if errors.Is(err, nats.ErrNoResponders) {
+			event = gw.log.Warn()
+		}
+		event.Err(err).Str("service", service).Str("sid", sessionID).Msg("WS connect ack error")
+		_ = safeWrite(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "service unavailable"))
 		return
 	}
 
@@ -453,7 +512,9 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 	defer sub.Unsubscribe()
 
 	// Горутина Ping: держит соединение живым и выявляет зависших клиентов.
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(wsPingInterval)
 		defer ticker.Stop()
 		for {
@@ -473,12 +534,14 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 	// Горутина shutdown: при завершении сервера отправляет клиенту close-фрейм
 	// и прерывает блокирующий ReadMessage через SetReadDeadline(now).
 	// Без этого ReadMessage ждал бы до wsReadDeadline (60s), блокируя server.Shutdown.
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		select {
 		case <-gw.ctx.Done():
-			safeWrite(websocket.CloseMessage,
+			_ = safeWrite(websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseGoingAway, "server restarting"))
-			conn.SetReadDeadline(time.Now())
+			_ = safeSetReadDeadline(time.Now())
 		case <-ctx.Done():
 			// Сессия завершилась раньше shutdown — горутина не нужна.
 		}

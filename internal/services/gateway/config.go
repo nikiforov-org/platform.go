@@ -8,6 +8,8 @@ import (
 
 	"platform/internal/platform/nc"
 	"platform/utils"
+
+	"github.com/rs/zerolog"
 )
 
 // Config — полная конфигурация шлюза, собранная из переменных окружения.
@@ -88,6 +90,12 @@ type HTTPConfig struct {
 	// Request-Reply (GATEWAY_NATS_REQUEST_TIMEOUT). Гарантирует, что gateway-горутина
 	// не зависает дольше заданного, даже если клиент продолжает ждать.
 	NATSRequestTimeout time.Duration
+
+	// WSConnectTimeout — таймаут ожидания ack от целевого сервиса при открытии
+	// WebSocket-сессии (GATEWAY_WS_CONNECT_TIMEOUT). Если сервис не подписан или
+	// не успел ответить — Gateway закрывает WS-соединение с кодом 1011, чтобы
+	// клиент не висел с «зомби»-WS до wsReadDeadline.
+	WSConnectTimeout time.Duration
 }
 
 // LoadConfig читает все параметры конфигурации из переменных окружения.
@@ -100,6 +108,7 @@ type HTTPConfig struct {
 //	HTTP_WRITE_TIMEOUT         — таймаут записи ответа     (формат: 15s) ("15s")
 //	HTTP_IDLE_TIMEOUT          — таймаут keep-alive        (формат: 60s) ("60s")
 //	GATEWAY_NATS_REQUEST_TIMEOUT — таймаут ожидания ответа из NATS (5s)  ("5s")
+//	GATEWAY_WS_CONNECT_TIMEOUT — таймаут ack от сервиса при WS connect    ("2s")
 //
 //	NATS_HOST                  — хост NATS-сервера                       ("127.0.0.1")
 //	NATS_PORT                  — клиентский порт NATS                    (4222)
@@ -120,44 +129,45 @@ type HTTPConfig struct {
 //	GATEWAY_MAX_WS_CONNS         — макс. одновременных WS-соединений        (1000)
 //	GATEWAY_TRUSTED_PROXY        — IP доверенного прокси (Cloudflare, LB)   ("")
 //	GATEWAY_RATE_LIMIT_MAX_IPS   — макс. IP в таблице rate limiter           (100000)
-func LoadConfig() (Config, error) {
+func LoadConfig(log zerolog.Logger) (Config, error) {
 	// ALLOWED_HOSTS читается через os.Getenv, а не utils.GetEnv: значение содержит
 	// запятые — fmt.Sscan остановился бы на первом разделителе.
 	// Парсинг делегируется utils.ParseAllowedHosts.
-	allowedHosts, err := utils.ParseAllowedHosts(os.Getenv("ALLOWED_HOSTS"))
+	allowedHosts, err := utils.ParseAllowedHosts(log, os.Getenv("ALLOWED_HOSTS"))
 	if err != nil {
 		return Config{}, fmt.Errorf("ALLOWED_HOSTS: %w", err)
 	}
 
 	natsCfg := nc.DefaultConfig()
-	natsCfg.Server.Host = utils.GetEnv("NATS_HOST", natsCfg.Server.Host)
-	natsCfg.Server.ClientPort = utils.GetEnv("NATS_PORT", natsCfg.Server.ClientPort)
-	natsCfg.Auth.User = utils.GetEnv("NATS_USER", "")
-	natsCfg.Auth.Password = utils.GetEnv("NATS_PASSWORD", "")
-	natsCfg.Reconnect.MaxAttempts = utils.GetEnv("NATS_RECONNECT_ATTEMPTS", natsCfg.Reconnect.MaxAttempts)
-	natsCfg.Reconnect.WaitDuration = utils.GetEnv("NATS_RECONNECT_WAIT", 2*time.Second)
+	natsCfg.Server.Host = utils.GetEnv(log, "NATS_HOST", natsCfg.Server.Host)
+	natsCfg.Server.ClientPort = utils.GetEnv(log, "NATS_PORT", natsCfg.Server.ClientPort)
+	natsCfg.Auth.User = utils.GetEnv(log, "NATS_USER", "")
+	natsCfg.Auth.Password = utils.GetEnv(log, "NATS_PASSWORD", "")
+	natsCfg.Reconnect.MaxAttempts = utils.GetEnv(log, "NATS_RECONNECT_ATTEMPTS", natsCfg.Reconnect.MaxAttempts)
+	natsCfg.Reconnect.WaitDuration = utils.GetEnv(log, "NATS_RECONNECT_WAIT", 2*time.Second)
 	natsCfg.KV.BucketName = "" // Gateway не использует KV — инициализация бакета не нужна.
 
 	return Config{
 		HTTP: HTTPConfig{
-			Addr:              utils.GetEnv("HTTP_ADDR", ":8080"),
-			ReadHeaderTimeout: utils.GetEnv("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
-			ReadTimeout:       utils.GetEnv("HTTP_READ_TIMEOUT", 15*time.Second),
-			WriteTimeout:      utils.GetEnv("HTTP_WRITE_TIMEOUT", 15*time.Second),
-			IdleTimeout:        utils.GetEnv("HTTP_IDLE_TIMEOUT", 60*time.Second),
-			NATSRequestTimeout: utils.GetEnv("GATEWAY_NATS_REQUEST_TIMEOUT", 5*time.Second),
+			Addr:              utils.GetEnv(log, "HTTP_ADDR", ":8080"),
+			ReadHeaderTimeout: utils.GetEnv(log, "HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
+			ReadTimeout:       utils.GetEnv(log, "HTTP_READ_TIMEOUT", 15*time.Second),
+			WriteTimeout:      utils.GetEnv(log, "HTTP_WRITE_TIMEOUT", 15*time.Second),
+			IdleTimeout:        utils.GetEnv(log, "HTTP_IDLE_TIMEOUT", 60*time.Second),
+			NATSRequestTimeout: utils.GetEnv(log, "GATEWAY_NATS_REQUEST_TIMEOUT", 5*time.Second),
+			WSConnectTimeout:   utils.GetEnv(log, "GATEWAY_WS_CONNECT_TIMEOUT", 2*time.Second),
 		},
 		NATS:         natsCfg,
 		AllowedHosts: allowedHosts,
 		RateLimit: RateLimitConfig{
-			Rate:           utils.GetEnv("GATEWAY_RATE_LIMIT", 100.0),
-			Burst:          utils.GetEnv("GATEWAY_RATE_BURST", 200),
-			AuthPathPrefix: utils.GetEnv("GATEWAY_AUTH_RATE_PREFIX", ""),
-			AuthRate:       utils.GetEnv("GATEWAY_AUTH_RATE_LIMIT", 5.0),
-			AuthBurst:      utils.GetEnv("GATEWAY_AUTH_RATE_BURST", 10),
-			MaxWSConns:     utils.GetEnv("GATEWAY_MAX_WS_CONNS", int64(1000)),
-			TrustedProxy:   utils.GetEnv("GATEWAY_TRUSTED_PROXY", ""),
-			MaxIPs:         utils.GetEnv("GATEWAY_RATE_LIMIT_MAX_IPS", 100_000),
+			Rate:           utils.GetEnv(log, "GATEWAY_RATE_LIMIT", 100.0),
+			Burst:          utils.GetEnv(log, "GATEWAY_RATE_BURST", 200),
+			AuthPathPrefix: utils.GetEnv(log, "GATEWAY_AUTH_RATE_PREFIX", ""),
+			AuthRate:       utils.GetEnv(log, "GATEWAY_AUTH_RATE_LIMIT", 5.0),
+			AuthBurst:      utils.GetEnv(log, "GATEWAY_AUTH_RATE_BURST", 10),
+			MaxWSConns:     utils.GetEnv(log, "GATEWAY_MAX_WS_CONNS", int64(1000)),
+			TrustedProxy:   utils.GetEnv(log, "GATEWAY_TRUSTED_PROXY", ""),
+			MaxIPs:         utils.GetEnv(log, "GATEWAY_RATE_LIMIT_MAX_IPS", 100_000),
 		},
 	}, nil
 }

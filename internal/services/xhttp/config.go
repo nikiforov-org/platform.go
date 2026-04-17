@@ -7,6 +7,8 @@ import (
 
 	"platform/internal/platform/nc"
 	"platform/utils"
+
+	"github.com/rs/zerolog"
 )
 
 // Config — конфигурация сервиса xhttp.
@@ -26,18 +28,17 @@ type Config struct {
 }
 
 // LoadConfig читает конфигурацию из переменных окружения.
-func LoadConfig() Config {
+func LoadConfig(log zerolog.Logger) Config {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		log := utils.Logger()
 		log.Fatal().Str("key", "DATABASE_URL").Msg("обязательная переменная окружения не задана")
 	}
 
 	natsCfg := nc.DefaultConfig()
-	natsCfg.Server.Host = utils.GetEnv("NATS_HOST", natsCfg.Server.Host)
-	natsCfg.Server.ClientPort = utils.GetEnv("NATS_PORT", natsCfg.Server.ClientPort)
-	natsCfg.Auth.User = utils.GetEnv("NATS_USER", "")
-	natsCfg.Auth.Password = utils.GetEnv("NATS_PASSWORD", "")
+	natsCfg.Server.Host = utils.GetEnv(log, "NATS_HOST", natsCfg.Server.Host)
+	natsCfg.Server.ClientPort = utils.GetEnv(log, "NATS_PORT", natsCfg.Server.ClientPort)
+	natsCfg.Auth.User = utils.GetEnv(log, "NATS_USER", "")
+	natsCfg.Auth.Password = utils.GetEnv(log, "NATS_PASSWORD", "")
 	// Собственный KV-бакет сервиса, изолированный от platform_state.
 	natsCfg.KV.BucketName = "xhttp_cache"
 	// Replicas не задаётся — NewClient определяет число реплик автоматически.
@@ -46,6 +47,6 @@ func LoadConfig() Config {
 	return Config{
 		NATS:        natsCfg,
 		DatabaseURL: dbURL,
-		CacheTTL:    utils.GetEnv("CACHE_TTL", 30*time.Second),
+		CacheTTL:    utils.GetEnv(log, "CACHE_TTL", 30*time.Second),
 	}
 }

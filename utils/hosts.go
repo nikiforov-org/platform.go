@@ -4,8 +4,9 @@ package utils
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
+
+	"github.com/rs/zerolog"
 )
 
 // AllowedHostSet — множество разрешённых Origin-хостов (host или host:port).
@@ -24,7 +25,7 @@ type AllowedHostSet map[string]struct{}
 //     а в .env удобнее писать без неё.
 //
 // Пустая строка возвращает пустое множество (проверка Origin отключена).
-func ParseAllowedHosts(raw string) (AllowedHostSet, error) {
+func ParseAllowedHosts(log zerolog.Logger, raw string) (AllowedHostSet, error) {
 	if raw == "" {
 		return AllowedHostSet{}, nil
 	}
@@ -47,20 +48,10 @@ func ParseAllowedHosts(raw string) (AllowedHostSet, error) {
 		for h := range set {
 			hosts = append(hosts, h)
 		}
-		pkgLog.Info().Strs("hosts", hosts).Msg("разрешённые хосты Origin")
+		log.Info().Strs("hosts", hosts).Msg("разрешённые хосты Origin")
 	}
 
 	return set, nil
-}
-
-// MustParseAllowedHosts — вариант ParseAllowedHosts для случаев,
-// когда невалидный ALLOWED_HOSTS является фатальной ошибкой конфигурации.
-func MustParseAllowedHosts(raw string) AllowedHostSet {
-	set, err := ParseAllowedHosts(raw)
-	if err != nil {
-		pkgLog.Fatal().Err(err).Msg("ALLOWED_HOSTS: невалидный хост")
-	}
-	return set
 }
 
 // Allows проверяет, разрешён ли данный Origin.
@@ -70,7 +61,7 @@ func MustParseAllowedHosts(raw string) AllowedHostSet {
 //  2. Нет заголовка Origin (curl, серверный вызов, health check) — разрешаем:
 //     Origin шлют только браузеры при кросс-доменных запросах.
 //  3. Иначе — извлекаем host из Origin и ищем его в множестве.
-func (s AllowedHostSet) Allows(origin string) bool {
+func (s AllowedHostSet) Allows(log zerolog.Logger, origin string) bool {
 	if len(s) == 0 {
 		return true
 	}
@@ -80,7 +71,7 @@ func (s AllowedHostSet) Allows(origin string) bool {
 
 	host, err := extractHost(origin)
 	if err != nil {
-		pkgLog.Warn().Str("origin", origin).Err(err).Msg("невалидный Origin")
+		log.Warn().Str("origin", origin).Err(err).Msg("невалидный Origin")
 		return false
 	}
 
@@ -103,10 +94,4 @@ func extractHost(s string) (string, error) {
 		return u.Host, nil
 	}
 	return s, nil
-}
-
-// AllowedHostsFromEnv читает и парсит ALLOWED_HOSTS из окружения.
-// Удобный shortcut для использования в LoadConfig сервисов.
-func AllowedHostsFromEnv() (AllowedHostSet, error) {
-	return ParseAllowedHosts(os.Getenv("ALLOWED_HOSTS"))
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/nats-io/nats.go"
+	"github.com/rs/zerolog"
 )
 
 // NATSResponse — унифицированный конверт ответа любого микросервиса.
@@ -23,31 +24,31 @@ type NATSResponse struct {
 // extraHeaders — опциональные дополнительные заголовки в формате пар "ключ", "значение".
 // Используется для передачи Set-Cookie из сервиса аутентификации через gateway в браузер:
 //
-//	utils.Reply(msg, 200, data, "Set-Cookie", accessCookie, "Set-Cookie", refreshCookie)
-func Reply(msg *nats.Msg, status int, data any, extraHeaders ...string) {
+//	utils.Reply(log, msg, 200, data, "Set-Cookie", accessCookie, "Set-Cookie", refreshCookie)
+func Reply(log zerolog.Logger, msg *nats.Msg, status int, data any, extraHeaders ...string) {
 	body, err := json.Marshal(NATSResponse{Data: data})
 	if err != nil {
-		pkgLog.Error().Err(err).Str("subject", msg.Subject).Msg("Reply: marshal error")
-		natsRespond(msg, 500, []byte(`{"error":"internal error"}`))
+		log.Error().Err(err).Str("subject", msg.Subject).Msg("Reply: marshal error")
+		natsRespond(log, msg, 500, []byte(`{"error":"internal error"}`))
 		return
 	}
-	natsRespond(msg, status, body, extraHeaders...)
+	natsRespond(log, msg, status, body, extraHeaders...)
 }
 
 // ReplyError публикует ответ с кодом ошибки и текстом в поле "error".
-func ReplyError(msg *nats.Msg, status int, errText string) {
-	pkgLog.Error().Str("subject", msg.Subject).Int("status", status).Str("error", errText).Msg("ReplyError")
+func ReplyError(log zerolog.Logger, msg *nats.Msg, status int, errText string) {
+	log.Error().Str("subject", msg.Subject).Int("status", status).Str("error", errText).Msg("ReplyError")
 	// NATSResponse{Error: string} — маршалинг строки не падает; fallback для надёжности.
 	body, err := json.Marshal(NATSResponse{Error: errText})
 	if err != nil {
 		body = []byte(`{"error":"internal error"}`)
 	}
-	natsRespond(msg, status, body)
+	natsRespond(log, msg, status, body)
 }
 
 // natsRespond — низкоуровневая публикация ответа через reply-subject.
 // Использует msg.RespondMsg — не требует доступа к *nats.Conn.
-func natsRespond(msg *nats.Msg, status int, body []byte, extraHeaders ...string) {
+func natsRespond(log zerolog.Logger, msg *nats.Msg, status int, body []byte, extraHeaders ...string) {
 	out := nats.NewMsg(msg.Reply)
 	out.Header.Set("Content-Type", "application/json")
 	out.Header.Set("Status", fmt.Sprintf("%d", status))
@@ -61,6 +62,6 @@ func natsRespond(msg *nats.Msg, status int, body []byte, extraHeaders ...string)
 	out.Data = body
 
 	if err := msg.RespondMsg(out); err != nil {
-		pkgLog.Error().Err(err).Str("subject", msg.Subject).Msg("natsRespond: ошибка отправки ответа")
+		log.Error().Err(err).Str("subject", msg.Subject).Msg("natsRespond: ошибка отправки ответа")
 	}
 }

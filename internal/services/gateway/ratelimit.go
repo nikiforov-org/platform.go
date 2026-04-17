@@ -211,12 +211,18 @@ func (gw *Gateway) wsConnGuard() (ok bool, release func()) {
 // realIP извлекает реальный IP клиента.
 // X-Real-IP принимается только если запрос пришёл с trustedProxy (Cloudflare, LB).
 // Если trustedProxy пустой или RemoteAddr не совпадает — используется r.RemoteAddr.
+//
+// X-Real-IP проверяется через net.ParseIP: невалидное значение от proxy попало
+// бы в LRU rate-limiter как уникальный ключ — мусор-DoS на таблицу. Fallback —
+// тот же r.RemoteAddr что и без заголовка.
 func realIP(r *http.Request, trustedProxy string) string {
 	if trustedProxy != "" {
 		remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 		if remoteIP == trustedProxy {
 			if ip := r.Header.Get("X-Real-IP"); ip != "" {
-				return ip
+				if parsed := net.ParseIP(ip); parsed != nil {
+					return parsed.String()
+				}
 			}
 		}
 	}

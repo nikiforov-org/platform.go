@@ -21,6 +21,10 @@ import (
 // New создаёт zerolog.Logger для указанного сервиса.
 // Все сообщения пишутся в stderr в формате JSON.
 // Каждое сообщение содержит поля: time, level, service, message.
+//
+// Уровень выставляется на конкретный экземпляр через .Level(...), а не через
+// zerolog.SetGlobalLevel: глобальный side-effect ломал бы параллельные тесты
+// и любой сценарий с несколькими логгерами в одном процессе.
 func New(service string) zerolog.Logger {
 	level := zerolog.InfoLevel
 	if raw := strings.ToLower(os.Getenv("LOG_LEVEL")); raw != "" {
@@ -28,9 +32,9 @@ func New(service string) zerolog.Logger {
 			level = lvl
 		}
 	}
-	zerolog.SetGlobalLevel(level)
 
 	return zerolog.New(os.Stderr).
+		Level(level).
 		With().
 		Timestamp().
 		Str("service", service).

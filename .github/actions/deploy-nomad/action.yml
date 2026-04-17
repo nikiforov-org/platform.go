@@ -74,6 +74,14 @@ runs:
             *) echo "Unsupported arch: $REMOTE_ARCH"; continue ;;
           esac
 
+          # Probe Nomad через локалхост: при reboot/JetStream-replay/OOM sshd живой,
+          # nomad — нет, и nomad job run таймаутит ~30s. Анонимный endpoint
+          # /v1/status/leader: 200+non-empty означает «лидер в кластере есть»,
+          # Nomad сам форвардит job run; curl -sf падает на любом не-2xx и connection
+          # error. 4646 публично закрыт между runner и нодами — пробуем через SSH.
+          $SSH "${DEPLOY_USER}@${HOST}" "curl -sf http://127.0.0.1:4646/v1/status/leader >/dev/null" 2>/dev/null \
+            || { echo "  Nomad not responsive on $HOST, trying next..."; continue; }
+
           CS_VAR="CS_${SVC_UPPER}_$(echo $ARCH | tr '[:lower:]' '[:upper:]')"
           CHECKSUM_VALUE="${!CS_VAR}"
 
@@ -95,8 +103,18 @@ runs:
 
           Q_NOMAD_TOKEN=$(printf '%q' "$NOMAD_TOKEN")
 
+          # 4 *-deploy.yml workflow триггерятся параллельно после CI и каждый
+          # делает git pull в /opt/platform → race на .git/index.lock.
+          # flock на /var/lock/platform-deploy.lock серилизует и эти 4 деплоя,
+          # и любые ручные SSH-деплои с того же узла. /var/lock = /run/lock на
+          # Ubuntu (tmpfs, 1777) — нет проблем со stale lock после reboot.
+          # -w 300: таймаут 5 минут — больше длительности любого штатного деплоя.
+          # Дескриптор 9 закрывается автоматически при выходе из шелла,
+          # flock освобождается тоже автоматически.
           if $SSH "${DEPLOY_USER}@${HOST}" "
             set -e
+            exec 9>/var/lock/platform-deploy.lock
+            flock -w 300 -x 9 || { echo 'platform-deploy: lock busy >300s, aborting'; exit 1; }
             export NOMAD_TOKEN=$Q_NOMAD_TOKEN
             ${ENV_EXPORTS}
             if [ -d /opt/platform/.git ]; then

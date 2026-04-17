@@ -31,8 +31,7 @@ import (
 
 func main() {
 	log := logger.New("xhttp")
-	utils.SetLogger(log)
-	cfg := xhttp.LoadConfig()
+	cfg := xhttp.LoadConfig(log)
 
 	// 1. PostgreSQL.
 	db, err := sql.Open("postgres", cfg.DatabaseURL)
@@ -65,8 +64,14 @@ func main() {
 
 	// 3. Конфигурация middleware для проверки JWT.
 	// ACCESS_SECRET должен совпадать с AUTH_ACCESS_SECRET сервиса xauth.
+	// Fail-fast при пустом значении: иначе HMAC-проверка с пустым ключом
+	// пропустит любой токен, подписанный таким же пустым ключом.
+	accessSecret := os.Getenv("ACCESS_SECRET")
+	if accessSecret == "" {
+		log.Fatal().Msg("ACCESS_SECRET обязательна, должна совпадать с AUTH_ACCESS_SECRET сервиса xauth")
+	}
 	authCfg := middleware.AuthConfig{
-		AccessSecret: []byte(os.Getenv("ACCESS_SECRET")),
+		AccessSecret: []byte(accessSecret),
 		Log:          log,
 	}
 
@@ -101,7 +106,7 @@ func main() {
 
 	// Сначала дренируем NATS: in-flight обработчики завершают работу,
 	// новые сообщения не принимаются — новые DB-запросы не стартуют.
-	drainTimeout := utils.GetEnv("NATS_DRAIN_TIMEOUT", 15*time.Second)
+	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 15*time.Second)
 	if err := natsClient.Drain(drainTimeout); err != nil {
 		log.Error().Err(err).Msg("NATS drain")
 	}

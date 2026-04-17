@@ -38,7 +38,7 @@ func (h *Handlers) HandleLogin(msg *nats.Msg) {
 		Password string `json:"password"`
 	}
 	if err := json.Unmarshal(msg.Data, &req); err != nil {
-		utils.ReplyError(msg, 400, "invalid json")
+		utils.ReplyError(h.log, msg, 400, "invalid json")
 		return
 	}
 
@@ -46,7 +46,7 @@ func (h *Handlers) HandleLogin(msg *nats.Msg) {
 	userOK := hmac.Equal([]byte(req.Username), []byte(h.cfg.Username))
 	passOK := hmac.Equal([]byte(req.Password), []byte(h.cfg.Password))
 	if !userOK || !passOK {
-		utils.ReplyError(msg, 401, "invalid credentials")
+		utils.ReplyError(h.log, msg, 401, "invalid credentials")
 		return
 	}
 
@@ -56,12 +56,12 @@ func (h *Handlers) HandleLogin(msg *nats.Msg) {
 	accessCookie, refreshCookie, err := h.issueTokenCookies(ctx)
 	if err != nil {
 		h.log.Error().Err(err).Msg("HandleLogin: ошибка выдачи токенов")
-		utils.ReplyError(msg, 500, "failed to issue tokens")
+		utils.ReplyError(h.log, msg, 500, "failed to issue tokens")
 		return
 	}
 
 	h.log.Info().Str("user", h.cfg.Username).Msg("login ok")
-	utils.Reply(msg, 200,
+	utils.Reply(h.log, msg, 200,
 		map[string]string{"status": "ok"},
 		"Set-Cookie", accessCookie,
 		"Set-Cookie", refreshCookie,
@@ -75,17 +75,17 @@ func (h *Handlers) HandleLogin(msg *nats.Msg) {
 func (h *Handlers) HandleRefresh(msg *nats.Msg) {
 	rawRefresh := utils.GetCookie(msg, "refresh_token")
 	if rawRefresh == "" {
-		utils.ReplyError(msg, 401, "refresh token missing")
+		utils.ReplyError(h.log, msg, 401, "refresh token missing")
 		return
 	}
 
 	c, err := VerifyJWT(rawRefresh, h.cfg.RefreshSecret)
 	if err != nil {
-		utils.ReplyError(msg, 401, "invalid refresh token")
+		utils.ReplyError(h.log, msg, 401, "invalid refresh token")
 		return
 	}
 	if time.Now().Unix() > c.Exp {
-		utils.ReplyError(msg, 401, "refresh token expired")
+		utils.ReplyError(h.log, msg, 401, "refresh token expired")
 		return
 	}
 
@@ -96,29 +96,34 @@ func (h *Handlers) HandleRefresh(msg *nats.Msg) {
 	val, err := h.nc.GetValue(ctx, h.cfg.NATS.KV.BucketName, c.Jti)
 	if err != nil {
 		h.log.Error().Err(err).Str("jti", c.Jti).Msg("HandleRefresh: KV get error")
-		utils.ReplyError(msg, 500, "internal error")
+		utils.ReplyError(h.log, msg, 500, "internal error")
 		return
 	}
 	if val == nil || string(val) == "revoked" {
-		utils.ReplyError(msg, 401, "refresh token revoked")
+		utils.ReplyError(h.log, msg, 401, "refresh token revoked")
 		return
 	}
 
-	// Отзываем старый JTI до выдачи нового — ротация безопасна на уровне KV.
-	if err := h.nc.PutValue(ctx, h.cfg.NATS.KV.BucketName, c.Jti, []byte("revoked")); err != nil {
-		utils.ReplyError(msg, 500, "failed to revoke old token")
-		return
-	}
-
+	// Сначала выдаём новые токены, затем отзываем старый JTI.
+	// Если порядок обратный и issue упадёт — клиент теряет сессию навсегда:
+	// старый JTI уже отозван, новых токенов нет.
+	// При текущем порядке сбой issue безопасен (старый JTI ещё валидный, клиент ретрайнит),
+	// а сбой revoke допустим: старый refresh останется валидным до своего Exp,
+	// но новые куки клиент уже получил.
 	accessCookie, refreshCookie, err := h.issueTokenCookies(ctx)
 	if err != nil {
 		h.log.Error().Err(err).Msg("HandleRefresh: ошибка выдачи токенов")
-		utils.ReplyError(msg, 500, "failed to issue tokens")
+		utils.ReplyError(h.log, msg, 500, "failed to issue tokens")
 		return
 	}
 
+	if err := h.nc.PutValue(ctx, h.cfg.NATS.KV.BucketName, c.Jti, []byte("revoked")); err != nil {
+		// Не критично: новые куки уже выдаём, старый JTI истечёт по Exp.
+		h.log.Warn().Err(err).Str("jti", c.Jti).Msg("HandleRefresh: не удалось отозвать старый JTI")
+	}
+
 	h.log.Info().Str("user", c.Sub).Msg("refresh ok")
-	utils.Reply(msg, 200,
+	utils.Reply(h.log, msg, 200,
 		map[string]string{"status": "ok"},
 		"Set-Cookie", accessCookie,
 		"Set-Cookie", refreshCookie,
@@ -144,7 +149,7 @@ func (h *Handlers) HandleLogout(msg *nats.Msg) {
 	clearRefresh := utils.BuildSetCookie("refresh_token", "", h.cfg.CookieDomain, -1, h.cfg.CookieSecure)
 
 	h.log.Info().Msg("logout")
-	utils.Reply(msg, 200,
+	utils.Reply(h.log, msg, 200,
 		map[string]string{"status": "ok"},
 		"Set-Cookie", clearAccess,
 		"Set-Cookie", clearRefresh,
@@ -158,21 +163,21 @@ func (h *Handlers) HandleLogout(msg *nats.Msg) {
 func (h *Handlers) HandleMe(msg *nats.Msg) {
 	rawAccess := utils.GetCookie(msg, "access_token")
 	if rawAccess == "" {
-		utils.ReplyError(msg, 401, "access token missing")
+		utils.ReplyError(h.log, msg, 401, "access token missing")
 		return
 	}
 
 	c, err := VerifyJWT(rawAccess, h.cfg.AccessSecret)
 	if err != nil {
-		utils.ReplyError(msg, 401, "invalid access token")
+		utils.ReplyError(h.log, msg, 401, "invalid access token")
 		return
 	}
 	if time.Now().Unix() > c.Exp {
-		utils.ReplyError(msg, 401, "access token expired")
+		utils.ReplyError(h.log, msg, 401, "access token expired")
 		return
 	}
 
-	utils.Reply(msg, 200, map[string]any{
+	utils.Reply(h.log, msg, 200, map[string]any{
 		"sub": c.Sub,
 		"exp": c.Exp,
 		"iat": c.Iat,

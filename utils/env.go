@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/rs/zerolog"
 )
 
 // GetEnv читает переменную окружения key и парсит её в тип T.
@@ -19,7 +21,7 @@ import (
 // Важно: fmt.Sscan не умеет парсить time.Duration с единицами измерения —
 // "15m" он разбирает как целое 15 (= 15ns), а не 15 минут. Поэтому для
 // time.Duration используется time.ParseDuration.
-func GetEnv[T any](key string, fallback T) T {
+func GetEnv[T any](log zerolog.Logger, key string, fallback T) T {
 	v := os.Getenv(key)
 	if v == "" {
 		return fallback
@@ -32,7 +34,7 @@ func GetEnv[T any](key string, fallback T) T {
 	if dp, ok := any(&result).(*time.Duration); ok {
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			pkgLog.Warn().Str("key", key).Str("value", v).Err(err).Msg("GetEnv: не удалось распарсить duration, используется значение по умолчанию")
+			log.Warn().Str("key", key).Str("value", v).Err(err).Msg("GetEnv: не удалось распарсить duration, используется значение по умолчанию")
 			return fallback
 		}
 		*dp = d
@@ -40,7 +42,7 @@ func GetEnv[T any](key string, fallback T) T {
 	}
 
 	if _, err := fmt.Sscan(v, &result); err != nil {
-		pkgLog.Warn().Str("key", key).Str("value", v).Err(err).Msg("GetEnv: не удалось распарсить переменную, используется значение по умолчанию")
+		log.Warn().Str("key", key).Str("value", v).Err(err).Msg("GetEnv: не удалось распарсить переменную, используется значение по умолчанию")
 		return fallback
 	}
 

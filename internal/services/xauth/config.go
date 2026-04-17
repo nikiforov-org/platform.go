@@ -7,6 +7,8 @@ import (
 
 	"platform/internal/platform/nc"
 	"platform/utils"
+
+	"github.com/rs/zerolog"
 )
 
 // Config — конфигурация сервиса xauth.
@@ -39,21 +41,20 @@ type Config struct {
 
 // LoadConfig читает конфигурацию из переменных окружения.
 // Завершает процесс с ошибкой, если обязательные переменные не заданы.
-func LoadConfig() Config {
+func LoadConfig(log zerolog.Logger) Config {
 	mustEnv := func(key string) string {
 		v := os.Getenv(key)
 		if v == "" {
-			log := utils.Logger()
 			log.Fatal().Str("key", key).Msg("обязательная переменная окружения не задана")
 		}
 		return v
 	}
 
 	natsCfg := nc.DefaultConfig()
-	natsCfg.Server.Host = utils.GetEnv("NATS_HOST", natsCfg.Server.Host)
-	natsCfg.Server.ClientPort = utils.GetEnv("NATS_PORT", natsCfg.Server.ClientPort)
-	natsCfg.Auth.User = utils.GetEnv("NATS_USER", "")
-	natsCfg.Auth.Password = utils.GetEnv("NATS_PASSWORD", "")
+	natsCfg.Server.Host = utils.GetEnv(log, "NATS_HOST", natsCfg.Server.Host)
+	natsCfg.Server.ClientPort = utils.GetEnv(log, "NATS_PORT", natsCfg.Server.ClientPort)
+	natsCfg.Auth.User = utils.GetEnv(log, "NATS_USER", "")
+	natsCfg.Auth.Password = utils.GetEnv(log, "NATS_PASSWORD", "")
 	// KV-бакет для хранения JTI refresh-токенов (для отзыва при logout/ротации).
 	natsCfg.KV.BucketName = "authms_refresh_tokens"
 	// Replicas не задаётся — NewClient определяет число реплик автоматически.
@@ -65,9 +66,9 @@ func LoadConfig() Config {
 		Password:      mustEnv("AUTH_PASSWORD"),
 		AccessSecret:  []byte(mustEnv("AUTH_ACCESS_SECRET")),
 		RefreshSecret: []byte(mustEnv("AUTH_REFRESH_SECRET")),
-		AccessTTL:     utils.GetEnv("AUTH_ACCESS_TTL", 15*time.Minute),
-		RefreshTTL:    utils.GetEnv("AUTH_REFRESH_TTL", 168*time.Hour),
-		CookieDomain:  utils.GetEnv("COOKIE_DOMAIN", ""),
-		CookieSecure:  utils.GetEnv("COOKIE_SECURE", true),
+		AccessTTL:     utils.GetEnv(log, "AUTH_ACCESS_TTL", 15*time.Minute),
+		RefreshTTL:    utils.GetEnv(log, "AUTH_REFRESH_TTL", 168*time.Hour),
+		CookieDomain:  utils.GetEnv(log, "COOKIE_DOMAIN", ""),
+		CookieSecure:  utils.GetEnv(log, "COOKIE_SECURE", true),
 	}
 }

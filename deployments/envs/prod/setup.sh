@@ -160,6 +160,9 @@ setup_nomad() {
   # ${PLATFORM_DOMAIN} раскрывается Nomad'ом из переменных окружения при старте.
   # bootstrap_expect = 1: нода сразу готова к работе без ожидания кворума.
   # При наличии других нод в DNS — автоматически входит в существующий кластер.
+  # ВНИМАНИЕ: первичное развёртывание 2+ нод параллельно — окно риска split-brain
+  # (DNS не пропагирован, каждая бутстрапится как самостоятельный лидер).
+  # Ноды первого кластера поднимать последовательно — см. prod.md «Важно».
   cat > "$NOMAD_CONF_DIR/nomad.hcl" << 'HCL'
 data_dir  = "/var/lib/nomad"
 log_level = "INFO"
@@ -261,11 +264,26 @@ install_nats() {
     return
   fi
   log "Установка NATS Server v${NATS_VERSION}..."
-  local arch tarball
+  local arch tarball base expected
   arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
   tarball="nats-server-v${NATS_VERSION}-linux-${arch}.tar.gz"
-  wget -qO "/tmp/${tarball}" \
-    "https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/${tarball}"
+  base="https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}"
+
+  # curl -fsSL: -f (fail on 4xx/5xx), -s (silent), -S (show errors), -L (follow redirects).
+  # Curl универсальнее wget — присутствует в большинстве минимальных образов,
+  # включая cloud-init минимальные Ubuntu / Debian / Alpine.
+  curl -fsSL -o "/tmp/${tarball}" "${base}/${tarball}"
+
+  # Сверка SHA256 против SHA256SUMS из того же релиза.
+  # Защищает от passive corruption (CDN bitrot, transient transport errors).
+  # От активного MITM через github.com TLS не защищает — общий канал — но это
+  # за пределами реалистичного threat model для одноразового bootstrap-окна.
+  expected=$(curl -fsSL "${base}/SHA256SUMS" \
+    | awk -v t="${tarball}" '$2==t {print $1; exit}')
+  [[ -n "$expected" ]] || die "SHA256SUMS не содержит строки для ${tarball}"
+  echo "${expected}  /tmp/${tarball}" | sha256sum -c - >/dev/null \
+    || die "SHA256 mismatch для ${tarball} — файл повреждён или подменён"
+
   tar -xzf "/tmp/${tarball}" -C /tmp
   mv "/tmp/nats-server-v${NATS_VERSION}-linux-${arch}/nats-server" /usr/local/bin/nats-server
   chmod +x /usr/local/bin/nats-server
@@ -295,8 +313,10 @@ generate_nats_certs() {
   printf '%s\n' "$NATS_CA_KEY" > /tmp/nats-ca.key
   chmod 600 /tmp/nats-ca.key
 
-  # Ключ ноды
-  openssl genrsa -out "$NATS_CONF_DIR/node.key" 2048 2>/dev/null
+  # Ключ ноды: ECDSA P-256 — NIST-current, защита до 2050+, ~3× быстрее
+  # TLS-handshake чем RSA-2048. Алгоритм node-key независим от алгоритма CA-key
+  # (NATS_CA_KEY приходит из env, не трогаем).
+  openssl ecparam -name prime256v1 -genkey -noout -out "$NATS_CONF_DIR/node.key" 2>/dev/null
   chmod 600 "$NATS_CONF_DIR/node.key"
 
   # CSR

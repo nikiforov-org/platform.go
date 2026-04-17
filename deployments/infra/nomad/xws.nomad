@@ -60,6 +60,7 @@ job "xws" {
 
     task "xws" {
       driver       = "raw_exec"
+      user         = "nomad" # I-H6: task от непривилегированного user'а, не от root
       kill_timeout = "30s"
 
       logs {
@@ -70,7 +71,10 @@ job "xws" {
       artifact {
         source      = "https://github.com/${var.GITHUB_REPO}/releases/download/${var.VERSION}/xws_linux_${var.ARCH}.tar.gz"
         destination = "local/"
-        checksum    = var.CHECKSUM
+
+        options {
+          checksum = var.CHECKSUM
+        }
       }
 
       config {

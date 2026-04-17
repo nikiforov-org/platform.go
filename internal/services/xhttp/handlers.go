@@ -57,7 +57,7 @@ func (h *Handlers) HandleCreate(msg *nats.Msg) {
 		Value string `json:"value"`
 	}
 	if err := json.Unmarshal(msg.Data, &req); err != nil {
-		utils.ReplyError(msg, 400, "invalid json")
+		utils.ReplyError(h.log, msg, 400, "invalid json")
 		return
 	}
 
@@ -69,12 +69,12 @@ func (h *Handlers) HandleCreate(msg *nats.Msg) {
 		req.Name, req.Value,
 	).Scan(&it.ID, &it.Name, &it.Value, &it.CreatedAt, &it.UpdatedAt)
 	if err != nil {
-		utils.ReplyError(msg, 500, "db error")
+		utils.ReplyError(h.log, msg, 500, "db error")
 		return
 	}
 
 	h.cache.Invalidate(ctx, "list")
-	utils.Reply(msg, 201, it)
+	utils.Reply(h.log, msg, 201, it)
 }
 
 // HandleGet возвращает запись по ID. Результат кэшируется в NATS KV.
@@ -89,7 +89,7 @@ func (h *Handlers) HandleGet(msg *nats.Msg) {
 		ID int64 `json:"id"`
 	}
 	if err := json.Unmarshal(msg.Data, &req); err != nil {
-		utils.ReplyError(msg, 400, "invalid json")
+		utils.ReplyError(h.log, msg, 400, "invalid json")
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *Handlers) HandleGet(msg *nats.Msg) {
 	if cached := h.cache.Get(ctx, cacheKey); len(cached) > 0 {
 		var it Item
 		if json.Unmarshal(cached, &it) == nil {
-			utils.Reply(msg, 200, it)
+			utils.Reply(h.log, msg, 200, it)
 			return
 		}
 	}
@@ -112,11 +112,11 @@ func (h *Handlers) HandleGet(msg *nats.Msg) {
 		req.ID,
 	).Scan(&it.ID, &it.Name, &it.Value, &it.CreatedAt, &it.UpdatedAt)
 	if err == sql.ErrNoRows {
-		utils.ReplyError(msg, 404, "not found")
+		utils.ReplyError(h.log, msg, 404, "not found")
 		return
 	}
 	if err != nil {
-		utils.ReplyError(msg, 500, "db error")
+		utils.ReplyError(h.log, msg, 500, "db error")
 		return
 	}
 
@@ -124,7 +124,7 @@ func (h *Handlers) HandleGet(msg *nats.Msg) {
 		h.cache.Put(ctx, cacheKey, encoded)
 	}
 
-	utils.Reply(msg, 200, it)
+	utils.Reply(h.log, msg, 200, it)
 }
 
 // HandleList возвращает список всех записей. Результат кэшируется.
@@ -138,7 +138,7 @@ func (h *Handlers) HandleList(msg *nats.Msg) {
 	if cached := h.cache.Get(ctx, "list"); len(cached) > 0 {
 		var xhttp []Item
 		if json.Unmarshal(cached, &xhttp) == nil {
-			utils.Reply(msg, 200, xhttp)
+			utils.Reply(h.log, msg, 200, xhttp)
 			return
 		}
 	}
@@ -148,7 +148,7 @@ func (h *Handlers) HandleList(msg *nats.Msg) {
 		SELECT id, name, value, created_at, updated_at
 		FROM xhttp ORDER BY id`)
 	if err != nil {
-		utils.ReplyError(msg, 500, "db error")
+		utils.ReplyError(h.log, msg, 500, "db error")
 		return
 	}
 	defer rows.Close()
@@ -157,13 +157,13 @@ func (h *Handlers) HandleList(msg *nats.Msg) {
 	for rows.Next() {
 		var it Item
 		if err := rows.Scan(&it.ID, &it.Name, &it.Value, &it.CreatedAt, &it.UpdatedAt); err != nil {
-			utils.ReplyError(msg, 500, "db scan error")
+			utils.ReplyError(h.log, msg, 500, "db scan error")
 			return
 		}
 		xhttp = append(xhttp, it)
 	}
 	if err := rows.Err(); err != nil {
-		utils.ReplyError(msg, 500, "db error")
+		utils.ReplyError(h.log, msg, 500, "db error")
 		return
 	}
 
@@ -171,7 +171,7 @@ func (h *Handlers) HandleList(msg *nats.Msg) {
 		h.cache.Put(ctx, "list", encoded)
 	}
 
-	utils.Reply(msg, 200, xhttp)
+	utils.Reply(h.log, msg, 200, xhttp)
 }
 
 // HandleUpdate обновляет запись и инвалидирует кэш записи и списка.
@@ -188,7 +188,7 @@ func (h *Handlers) HandleUpdate(msg *nats.Msg) {
 		Value string `json:"value"`
 	}
 	if err := json.Unmarshal(msg.Data, &req); err != nil {
-		utils.ReplyError(msg, 400, "invalid json")
+		utils.ReplyError(h.log, msg, 400, "invalid json")
 		return
 	}
 
@@ -200,16 +200,16 @@ func (h *Handlers) HandleUpdate(msg *nats.Msg) {
 		req.Name, req.Value, req.ID,
 	).Scan(&it.ID, &it.Name, &it.Value, &it.CreatedAt, &it.UpdatedAt)
 	if err == sql.ErrNoRows {
-		utils.ReplyError(msg, 404, "not found")
+		utils.ReplyError(h.log, msg, 404, "not found")
 		return
 	}
 	if err != nil {
-		utils.ReplyError(msg, 500, "db error")
+		utils.ReplyError(h.log, msg, 500, "db error")
 		return
 	}
 
 	h.cache.Invalidate(ctx, fmt.Sprintf("item:%d", req.ID), "list")
-	utils.Reply(msg, 200, it)
+	utils.Reply(h.log, msg, 200, it)
 }
 
 // HandleDelete удаляет запись и инвалидирует кэш.
@@ -224,25 +224,25 @@ func (h *Handlers) HandleDelete(msg *nats.Msg) {
 		ID int64 `json:"id"`
 	}
 	if err := json.Unmarshal(msg.Data, &req); err != nil {
-		utils.ReplyError(msg, 400, "invalid json")
+		utils.ReplyError(h.log, msg, 400, "invalid json")
 		return
 	}
 
 	res, err := h.db.ExecContext(ctx, `DELETE FROM xhttp WHERE id = $1`, req.ID)
 	if err != nil {
-		utils.ReplyError(msg, 500, "db error")
+		utils.ReplyError(h.log, msg, 500, "db error")
 		return
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		utils.ReplyError(msg, 500, "db error")
+		utils.ReplyError(h.log, msg, 500, "db error")
 		return
 	}
 	if n == 0 {
-		utils.ReplyError(msg, 404, "not found")
+		utils.ReplyError(h.log, msg, 404, "not found")
 		return
 	}
 
 	h.cache.Invalidate(ctx, fmt.Sprintf("item:%d", req.ID), "list")
-	utils.Reply(msg, 204, nil)
+	utils.Reply(h.log, msg, 204, nil)
 }

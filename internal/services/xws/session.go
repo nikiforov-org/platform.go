@@ -3,6 +3,7 @@ package xws
 
 import (
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -25,7 +26,14 @@ type OutMsg struct {
 }
 
 // session — активная WebSocket-сессия одного клиента.
+//
+// mu синхронизирует close()/resetTimer() с AfterFunc-коллбэком таймера:
+// без него Reset() мог бы стрелять параллельно с уже запущенным
+// коллбэком (Go docs прямо это запрещают), а disconnect-ветка и таймер —
+// одновременно вызвать Unsubscribe + PublishMsg(CLOSE) дважды.
 type session struct {
+	mu      sync.Mutex
+	closed  bool
 	sid     string
 	outSubj string // api.v1.xws.ws.out.{sid}
 	inSub   *nats.Subscription
@@ -49,7 +57,17 @@ func (s *session) send(out OutMsg) {
 
 // close публикует управляющий фрейм Control=CLOSE и отписывается от входящей темы.
 // Gateway получает фрейм и закрывает WebSocket-соединение со стороны сервера.
+// Идемпотентен: повторные вызовы — no-op.
 func (s *session) close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	s.timer.Stop()
+	s.mu.Unlock()
+
 	msg := nats.NewMsg(s.outSubj)
 	msg.Header.Set("Control", "CLOSE")
 	if err := s.nc.PublishMsg(msg); err != nil {
@@ -62,6 +80,12 @@ func (s *session) close() {
 }
 
 // resetTimer сбрасывает таймер бездействия при получении любого сообщения.
+// После close() — no-op, чтобы не возникала гонка Reset vs AfterFunc.
 func (s *session) resetTimer() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
 	s.timer.Reset(s.timeout)
 }

@@ -121,10 +121,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           KEEP=5
+          # Явная сортировка по createdAt: gh release list по умолчанию отдаёт
+          # newest-first через REST API, но это поведение не зафиксировано в CLI.
+          # При ручном rebuild старого тега (created_at свежее tag-номера) tail -n
+          # удалил бы не самые старые билды.
           gh release list --repo "${{ github.repository }}" --limit 100 \
             --json tagName,isPrerelease,createdAt \
-            | jq -r '.[] | select(.isPrerelease and (.tagName | startswith("build-"))) | .tagName' \
-            | tail -n +$(( KEEP + 1 )) \
+            | jq -r --argjson keep "$KEEP" '
+                [.[] | select(.isPrerelease and (.tagName | startswith("build-")))]
+                | sort_by(.createdAt) | reverse | .[$keep:] | .[].tagName
+              ' \
             | xargs -r -I {} sh -c \
               'echo "Deleting {}..." && gh release delete {} \
                --repo "${{ github.repository }}" --yes --cleanup-tag'
