@@ -62,16 +62,8 @@ func main() {
 
 	h := xhttp.NewHandlers(natsClient, db, cfg, log)
 
-	// 3. Конфигурация middleware для проверки JWT.
-	// ACCESS_SECRET должен совпадать с AUTH_ACCESS_SECRET сервиса xauth.
-	// Fail-fast при пустом значении: иначе HMAC-проверка с пустым ключом
-	// пропустит любой токен, подписанный таким же пустым ключом.
-	accessSecret := os.Getenv("ACCESS_SECRET")
-	if accessSecret == "" {
-		log.Fatal().Msg("ACCESS_SECRET обязательна, должна совпадать с AUTH_ACCESS_SECRET сервиса xauth")
-	}
 	authCfg := middleware.AuthConfig{
-		AccessSecret: []byte(accessSecret),
+		AccessSecret: cfg.AccessSecret,
 		Log:          log,
 	}
 

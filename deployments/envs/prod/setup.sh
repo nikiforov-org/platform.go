@@ -127,7 +127,12 @@ setup_swap() {
 install_base() {
   log "Установка базовых пакетов..."
   apt-get update -q
-  apt-get install -y -q curl wget git unzip gnupg lsb-release ufw dnsutils
+  # --no-install-recommends: ставим только Depends:, без Recommends:.
+  # Меньше пакетов на диске, меньше демонов (rsyslog/policykit и т.п.),
+  # меньше attack surface. Все перечисленные утилиты сохраняют функциональность
+  # без recommends (curl, dig, lsb_release, ufw, gpg работают на Depends).
+  apt-get install -y -q --no-install-recommends \
+    curl wget git unzip gnupg lsb-release ufw dnsutils
 }
 
 # =============================================================================
@@ -139,7 +144,7 @@ install_nomad() {
     # setup.sh не апгрейдит Nomad автоматически: в скрипте нет pinned
     # NOMAD_VERSION (Nomad ставится из HashiCorp APT = latest на момент
     # первой установки). Upgrade — отдельная ops-процедура на каждой ноде:
-    #   apt-get update && apt-get install --only-upgrade -y nomad
+    #   apt-get update && apt-get install --only-upgrade -y --no-install-recommends nomad
     #   systemctl restart nomad
     # Rolling по нодам даёт zero-downtime для Jobs (Raft переизбирает лидера,
     # client-allocations сохраняются).
@@ -152,7 +157,7 @@ install_nomad() {
 https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
     > /etc/apt/sources.list.d/hashicorp.list
   apt-get update -q
-  apt-get install -y -q nomad
+  apt-get install -y -q --no-install-recommends nomad
   info "Установлен: $(nomad version | head -1)"
 }
 
@@ -341,7 +346,7 @@ install_nats() {
 generate_nats_certs() {
   log "Генерация TLS-сертификатов NATS..."
 
-  command -v openssl >/dev/null || apt-get install -y -q openssl
+  command -v openssl >/dev/null || apt-get install -y -q --no-install-recommends openssl
 
   # CA cert — публичный, нужен для проверки сертификатов других нод
   printf '%s\n' "$NATS_CA_CERT" > "$NATS_CONF_DIR/ca.crt"

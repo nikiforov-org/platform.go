@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/signal"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -30,6 +31,14 @@ import (
 
 	"github.com/nats-io/nats.go"
 )
+
+// sid идёт в NATS-subject (`api.v1.xws.ws.in.<sid>` / `out.<sid>`):
+// `.`, `*`, `>` и пробелы — спецсимволы маршрутизации NATS, при попадании
+// в subject ломают подписку либо превращают её в wildcard. Gateway
+// генерирует sid через CSPRNG (16 hex), но xws — отдельный сервис: любой
+// другой компонент с NATS-доступом может опубликовать connect с произвольным
+// sid. Defense-in-depth: валидируем формат на входе.
+var validSID = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,64}$`)
 
 func main() {
 	log := logger.New("xws")
@@ -61,6 +70,10 @@ func main() {
 				return
 			}
 			sid = req.SID
+		}
+		if !validSID.MatchString(sid) {
+			log.Warn().Str("sid", sid).Msg("невалидный формат sid, отклонён")
+			return
 		}
 		mgr.Open(sid)
 		// Ack для Gateway: подтверждаем регистрацию сессии. Без ack Gateway

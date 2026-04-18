@@ -1,0 +1,200 @@
+⏺ Вопрос 1 — Lifecycle Shutdown: health до или после Drain                                                                                              
+                                                                                                                                                        
+  Контекст. Текущая shutdown-последовательность в cmd/xauth/main.go (и аналогично в xhttp/xws): SIGTERM → опциональные специфичные шаги (mgr.CloseAll() 
+  в xws) → natsClient.Drain(timeout) → defer db.Close() (в xhttp) → main exit. Куда воткнуть healthSrv.Shutdown(ctx) — до Drain или после?              
+                                                                                                                                                        
+  Вариант А — ДО Drain. Сразу после SIGTERM убиваем health-listener: /healthz начинает возвращать connection refused. Дальше идёт длинный Drain         
+  (in-flight handler'ы дорабатывают). Nomad service-check видит probe-fail в течение 1-2 интервалов (10-20 секунд) → помечает alloc unhealthy →         
+  перестаёт балансировать на него (для service-jobs) или просто не считает живым. Это каноничный pattern «fail health first, then drain» из             
+  k8s/Consul/HashiCorp docs — суть в том, что сервис должен явно сигнализировать «я ухожу» задолго до фактического завершения, чтобы upstream-роутинг   
+  успел перенаправить трафик.                                                                                                                           
+
+  Вариант Б — ПОСЛЕ Drain. Health работает до самого конца. Probe из Nomad всегда получает 200 — пока процесс жив. Только когда Drain закончен (или     
+  таймаут истёк) → health Shutdown → процесс exit.
+                                                                                                                                                        
+  Сравнение. В нашем стеке (DNS round-robin без реального LB) разница менее острая, чем в k8s, но pattern всё равно работает: Nomad на других нодах     
+  service-discovery видит alloc как unhealthy, новые WS-соединения от Gateway пойдут в обход (если Gateway добавит discovery-routing — пока нет, сейчас
+  direct subject NATS). Для NATS-only сервисов через subject-routing сигнал «я нездоров» меньше нужен — NATS всё равно балансирует через QueueSubscribe;
+   но для будущих real-сервисов с HTTP-интерфейсом «А» правильнее. Также: вариант «А» — стандартное поведение для readiness probe в k8s/Nomad world;
+  контрибьюторы будут ожидать именно этот pattern.
+
+  Рекомендация: А (ДО Drain). Каноничный graceful-drain pattern, минимизирует окно, в котором сервис «не отвечает на запросы, но проходит health-check».
+  
+  ---                                                                                                                                                   
+  Вопрос 2 — nuid зависимость
+                             
+  Контекст. Платформенному helper'у нужен короткий уникальный per-instance ID для subject _health.<svc>.<id>. Варианты ID-генератора:
+                                                                                                                                                        
+  Вариант А — github.com/nats-io/nuid как direct dep. Пакет от NATS-команды, специально для коротких high-throughput ID (22 chars, lock-free,           
+  ~10ns/Next). Уже присутствует в дереве зависимостей через transitive (nats.go использует его для генерации inbox'ов и SID'ов). Нужно явно добавить в  
+  go.mod как direct.                                                                                                                                    
+                  
+  Вариант Б — использовать через transitive. Не добавлять в go.mod, импортировать как есть. Работает, но Go community считает это анти-паттерном: если  
+  nats.go в будущем перестанет использовать nuid — наш код сломается, потому что indirect dep исчезнет из go.sum.
+                                                                                                                                                        
+  Вариант В — свой 8-байтный hex-ID через crypto/rand. ~8 строк boilerplate'а в платформе:                                                              
+  func newID() string {
+      var b [8]byte                                                                                                                                     
+      rand.Read(&b)
+      return fmt.Sprintf("%x", b)
+  }                              
+  Нет новых dep, но дублирует существующий уже-в-дереве функционал.
+                                                                   
+  Вариант Г — nats.Conn.NewInbox(). Встроенный inbox-генератор, формат _INBOX.<nuid>. Семантически неверно: _INBOX.* зарезервирован для request-reply   
+  pattern в nats.go (используется внутренне для ответных сообщений). Использование чужого префикса — code smell, может конфликтовать с библиотекой.     
+                                                                                                                                                        
+  Сравнение. «А» правильно по семантике (явная decl зависимости), стоит +1 строку в go.mod; «Б» хрупко; «В» — over-engineering ради избегания одной     
+  строки в go.mod; «Г» — анти-паттерн.
+                                                                                                                                                        
+  Рекомендация: А (добавить nuid как direct dep). Канонический NATS-стек ID-генератор, версия pinned явно, импорт чистый.                               
+  
+  ---                                                                                                                                                   
+  Вопрос 3 — семантика 503 в логах
+                                  
+  Контекст. /healthz делает p.Conn.Request(healthSubject, nil, 1s). При сбое возможные ошибки:
+  - nats.ErrNoResponders — никто не подписан на subject. Означает: наш self-handler упал (Subscription пропал из NATS, маловероятно но возможно в exotic
+   crash-сценариях) или сам Conn в плохом состоянии. Симптом: «мы не на связи».                                                                         
+  - context.DeadlineExceeded — handler есть, но не ответил за 1s. Это main-симптом deadlock'а в dispatcher'е — то самое, ради чего весь P-M9 затевается.
+   Симптом: «мы заняты, висим».                                                                                                                         
+  - nats.ErrConnectionClosed — NATS-connection уже закрыт (Drain в процессе или после). Probe пришёл «не вовремя». Симптом: «я уже ушёл».               
+  - Прочие сетевые/неклассифицированные.                                                                                                 
+                                                                                                                                                        
+  Вариант А — различать в логах:                                                                                                                        
+  switch {                                                                                                                                              
+  case errors.Is(err, nats.ErrNoResponders):                                                                                                            
+      log.Warn().Msg("health: handler не подписан")
+  case errors.Is(err, context.DeadlineExceeded):   
+      log.Error().Msg("health: roundtrip timeout — возможен deadlock в dispatcher")                                                                     
+  case errors.Is(err, nats.ErrConnectionClosed):                                   
+      log.Debug().Msg("health: NATS закрыт (shutdown в процессе)")                                                                                      
+  default:                                                        
+      log.Error().Err(err).Msg("health: roundtrip failed")                                                                                              
+  }                                                       
+  - HTTP всегда 503.                                                                                                                                    
+                    
+  Плюсы: оператор видит причину сразу в логе, severity отражает реальную опасность (deadlock = Error/wake-up; shutdown-window = Debug/нет шума).        
+                                                                                                                                                        
+  Минусы: 8-10 строк кода, новый импорт errors.                                                                                                         
+                                                                                                                                                        
+  Вариант Б — одинаково для всех:                                                                                                                       
+  log.Error().Err(err).Msg("health probe failed")
+  - HTTP всегда 503.                             
+
+  Плюсы: 1 строка, err уже описывает причину.                                                                                                           
+  
+  Минусы: shutdown-window выдаёт false-positive Error (шум в alert'ах), все причины уравнены по severity.                                               
+                  
+  Вариант В — не логировать вообще, только 503. Минимализм. Минус: при инциденте оператор не понимает, почему health падает, без отдельного запроса в   
+  Nomad logs.     
+                                                                                                                                                        
+  Сравнение. Платформенный код read-once, run-many — стоимость диагностики ошибки за всё время run-а кратно дороже одного раза написания switch на 5    
+  case'ов. «Б» особенно проблемен из-за шума при reconnect/shutdown — false-positive Error забьёт alert-канал, оператор начнёт игнорировать.
+                                                                                                                                                        
+  Рекомендация: А (различать) с обязательной обработкой nats.ErrConnectionClosed как Debug (иначе при каждом graceful shutdown будет ложный Error в     
+  логе).
+                                                                                                                                                        
+  ---             
+  Вопрос 4 — HEALTH_ADDR=""
+                           
+  Контекст. Что должен делать сервис, если HEALTH_ADDR не задан в окружении?
+                                                                                                                                                        
+  Вариант А — disabled (default "").
+  if healthAddr := utils.GetEnv(log, "HEALTH_ADDR", ""); healthAddr != "" {                                                                             
+      healthSrv, err := natsClient.RegisterHealth(...)                     
+      ...                                                                                                                                               
+  }                                                                                                                                                     
+  Плюсы:                                                                                                                                                
+  - Dev-удобство: go run ./cmd/xauth без настройки ENV — работает                                                                                       
+  - Backwards compat: старые dev-флоу не ломаются                
+  - Можно осознанно отключить health (например, для bare-bones smoke-test или alternative health через sidecar)                                         
+  
+  Минусы:                                                                                                                                               
+  - В prod возможен silent-skip: если оператор забыл HEALTH_ADDR в .nomad, сервис стартует без health probe → Nomad считает healthy навсегда, regression
+   P-M9 → I-L7                                                                                                                                          
+  - Защита только через checklist в prod.md и code review
+                                                                                                                                                        
+  Вариант Б — required (Fatal при пустом):
+  healthAddr := os.Getenv("HEALTH_ADDR")                                                                                                                
+  if healthAddr == "" {                 
+      log.Fatal().Str("key", "HEALTH_ADDR").Msg("обязательная переменная окружения не задана")                                                          
+  }                                                                                           
+  Плюсы:                                                                                                                                                
+  - Невозможно деплойнуть без health probe — fail-fast на старте
+  - Симметрично DATABASE_URL / ACCESS_SECRET (другие обязательные ENV в xhttp)                                                                          
+  - В prod невозможно регрессировать незаметно                                
+                                                                                                                                                        
+  Минусы:                                                                                                                                               
+  - Dev должен задать HEALTH_ADDR даже для quick test (либо start.sh всегда задаёт)                                                                     
+  - При коллизии порта в dev сервис не стартует совсем (вместо «работает без health»)                                                                   
+                                                                                     
+  Вариант В — default :0 (динамический OS-port):                                                                                                        
+  healthAddr := utils.GetEnv(log, "HEALTH_ADDR", "127.0.0.1:0")                                                                                         
+  Плюсы:                                                                                                                                                
+  - Никогда не disabled                                                                                                                                 
+  - Dev — автоматически свободный порт, ноль коллизий
+  - Prod — переопределяется через .nomad                                                                                                                
+                  
+  Минусы:                                                                                                                                               
+  - В dev порт неизвестен заранее (нужно смотреть в лог либо через lsof -i -P | grep <pid>)
+  - Health-тестирование в dev требует extra step                                                                                                        
+  - Default-value :0 неинтуитивен для читателя кода
+                                                                                                                                                        
+  Сравнение. Аргумент в пользу строгости (Б): другие обязательные ENV в платформе именно так и устроены — DATABASE_URL в xhttp, AUTH_*_SECRET в xauth → 
+  Fatal. Аргумент против: health — в отличие от secrets — не критичен для функциональности; при отсутствии не ломает бизнес-логику, только мониторинг.  
+  Но в новой платформенной концепции health → самовосстановление через Nomad-restart, поэтому логически он становится критичным.                        
+                                                                                                                                                        
+  Рекомендация: Б (required, Fatal). Симметрия с другими обязательными ENV, защита от silent-prod-skip. Dev-проблема решается через ответ на вопрос #5  
+  (start.sh всегда задаёт порт). Если в будущем понадобится осознанно отключить — добавить специальный sentinel-value HEALTH_ADDR=disabled.
+                                                                                                                                                        
+  ---             
+  Вопрос 5 — dev-порты в start.sh
+                                 
+  Контекст. start.sh генерирует HEREDOC nomad-jobs для x*-сервисов в dev-режиме. Каждому нужен свой health-порт. Как назначать?
+                                                                                                                                                        
+  Вариант А — фиксированные константы 9101/9102/9103 в HEREDOC.                                                                                         
+  # В HEREDOC xauth.nomad:                                                                                                                              
+  HEALTH_ADDR = "127.0.0.1:9101"                                                                                                                        
+  Плюсы: просто, стабильно между запусками, известны для curl.                                                                                          
+                                                              
+  Минусы: коллизия если порт занят (другой dev-инстанс, локальный сервис, etc.) → сервис не стартует. Параллельные dev-кластеры невозможны без          
+  переопределения.                                                                                                                                      
+                                                                                                                                                        
+  Вариант Б — bash port-finder.                                                                                                                         
+  find_free_port() {
+    python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1])'                                                            
+  }                                                                                         
+  XAUTH_HEALTH=$(find_free_port)                                                                                                                        
+  Плюсы: ноль коллизий, параллельные кластеры работают.
+                                                                                                                                                        
+  Минусы: новая dep (python3) на dev-машине, либо ужасный bash-аналог через ss/comm. Нужно сохранять порты для пользователя (вывод в summary). Сложнее  
+  start.sh.                                                                                                                                             
+                                                                                                                                                        
+  Вариант В — nomad dynamic port (как в prod).                                                                                                          
+  network { port "health" {} }   # без to= → Nomad выбирает из своего диапазона
+  env { HEALTH_ADDR = "127.0.0.1:${NOMAD_PORT_health}" }                                                                                                
+  Плюсы:                                                                                                                                                
+  - Один шаблон для dev и prod — нет divergence между HEREDOC и канонической .nomad
+  - Nomad сам управляет диапазоном портов (default 20000-32000), ноль коллизий                                                                          
+  - Параллельные кластеры работают                                                                                                                      
+  - Узнать порт через nomad alloc status <id> | grep health либо nomad job inspect                                                                      
+                                                                                                                                                        
+  Минусы: порт неизвестен заранее (extra command для curl), но это nomad job status xauth — приемлемо.                                                  
+                                                                                                                                                        
+  Вариант Г — вообще не задавать HEALTH_ADDR в dev.                                                                                                     
+  Только если ответ на #4 = А (disabled при пустом). Health просто отсутствует в dev, тестируется в staging.                                            
+                                                                                                                                                        
+  Плюсы: минимальные правки start.sh.                                                                                                                   
+                                                                                                                                                        
+  Минусы: невозможно протестировать health локально, регрессия может остаться до staging.                                                               
+                  
+  Сравнение. Вариант В выигрывает по двум причинам: (1) идентичность dev и prod конфигурации — это важная инвариантность, минимизирует bug-классы из    
+  drift'а между средами; (2) Nomad нативно решает port management, не нужно изобретать bash-finder. Минор-минус (порт неизвестен заранее) лечится
+  documenation в dev.md («curl по $(nomad job status xauth | grep health)»).                                                                            
+                  
+  Рекомендация: В (nomad dynamic port). Единый pattern dev+prod, 0 коллизий, минимум кода в start.sh. Условие: ответ на #4 = Б (required), иначе для    
+  dev-удобства можно скатиться на А.
+                                                                                                                                                        
+  ---             
+  Сводка рекомендаций: 1=А, 2=А, 3=А, 4=Б, 5=В.
+                                                                                                                                                        
+  Когда ответишь на вопросы — финализирую план одним блоком на подтверждение.

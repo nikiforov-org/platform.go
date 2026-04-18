@@ -20,11 +20,13 @@ import (
 //	NATS_USER         — логин авторизации       ("")
 //	NATS_PASSWORD     — пароль авторизации      ("")
 //	DATABASE_URL   — DSN PostgreSQL      (обязательно)
+//	ACCESS_SECRET  — HMAC-ключ JWT       (обязательно, должен совпадать с AUTH_ACCESS_SECRET сервиса xauth)
 //	CACHE_TTL         — TTL кэша                ("30s")
 type Config struct {
-	NATS        nc.Config
-	DatabaseURL string
-	CacheTTL    time.Duration
+	NATS         nc.Config
+	DatabaseURL  string
+	AccessSecret []byte
+	CacheTTL     time.Duration
 }
 
 // LoadConfig читает конфигурацию из переменных окружения.
@@ -32,6 +34,12 @@ func LoadConfig(log zerolog.Logger) Config {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		log.Fatal().Str("key", "DATABASE_URL").Msg("обязательная переменная окружения не задана")
+	}
+	// Fail-fast: пустой HMAC-ключ принял бы любой токен, подписанный таким же
+	// пустым ключом. Должен совпадать с AUTH_ACCESS_SECRET сервиса xauth.
+	accessSecret := os.Getenv("ACCESS_SECRET")
+	if accessSecret == "" {
+		log.Fatal().Str("key", "ACCESS_SECRET").Msg("обязательная переменная окружения не задана")
 	}
 
 	natsCfg := nc.DefaultConfig()
@@ -45,8 +53,9 @@ func LoadConfig(log zerolog.Logger) Config {
 	natsCfg.KV.History = 1 // Кэш не нуждается в истории ревизий.
 
 	return Config{
-		NATS:        natsCfg,
-		DatabaseURL: dbURL,
-		CacheTTL:    utils.GetEnv(log, "CACHE_TTL", 30*time.Second),
+		NATS:         natsCfg,
+		DatabaseURL:  dbURL,
+		AccessSecret: []byte(accessSecret),
+		CacheTTL:     utils.GetEnv(log, "CACHE_TTL", 30*time.Second),
 	}
 }
