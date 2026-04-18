@@ -51,6 +51,14 @@ func VerifyJWT(token string, secret []byte) (Claims, error) {
 		return Claims{}, fmt.Errorf("jwt: неверный формат токена")
 	}
 
+	// Defense-in-depth: токен подписан именно нашим SignJWT (один фиксированный
+	// header HS256). Существующий HMAC-check уже отбрасывает подделки без
+	// секрета, но явная проверка fail-fast и страхует от будущих правок,
+	// которые могли бы начать диспатчить по alg из header.
+	if parts[0] != jwtHeader {
+		return Claims{}, fmt.Errorf("jwt: неподдерживаемый header")
+	}
+
 	hp := parts[0] + "." + parts[1]
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(hp))

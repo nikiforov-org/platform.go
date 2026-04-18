@@ -136,6 +136,13 @@ install_base() {
 install_nomad() {
   if command -v nomad &>/dev/null; then
     info "Nomad уже установлен: $(nomad version | head -1)"
+    # setup.sh не апгрейдит Nomad автоматически: в скрипте нет pinned
+    # NOMAD_VERSION (Nomad ставится из HashiCorp APT = latest на момент
+    # первой установки). Upgrade — отдельная ops-процедура на каждой ноде:
+    #   apt-get update && apt-get install --only-upgrade -y nomad
+    #   systemctl restart nomad
+    # Rolling по нодам даёт zero-downtime для Jobs (Raft переизбирает лидера,
+    # client-allocations сохраняются).
     return
   fi
   log "Установка Nomad (HashiCorp APT)..."
@@ -169,6 +176,15 @@ log_level = "INFO"
 log_json  = true
 bind_addr = "0.0.0.0"
 
+# HTTP API (4646) слушает только localhost: операции выполняются через SSH +
+# nomad CLI с самой ноды (CI делает то же — SSH→nomad job run). UI / внешний
+# мониторинг — через ssh-tunnel: ssh -L 4646:127.0.0.1:4646 user@node.
+# RPC (4647) и Serf (4648) остаются на 0.0.0.0 — нужны для inter-node трафика.
+# Защищает от случайного открытия порта 4646 наружу при откате ACL/misconfig.
+addresses {
+  http = "127.0.0.1"
+}
+
 advertise {
   http = "${attr.unique.network.ip-address}"
   rpc  = "${attr.unique.network.ip-address}"
@@ -178,6 +194,12 @@ advertise {
 server {
   enabled          = true
   bootstrap_expect = 1
+
+  # raft_multiplier=5 — масштабирует Raft-таймауты ×5 (heartbeat 1s→5s,
+  # election 1s→5s, leader_lease 0.5s→2.5s). Платформа multi-DC (cross-DC
+  # latency ≥50ms, transient packet loss); default=1 (LAN <10ms) флапает
+  # на WAN-jitter. Trade-off: failover 5-25s вместо 1-5s — приемлемо.
+  raft_multiplier = 5
 
   job_gc_threshold        = "4h"
   eval_gc_threshold       = "4h"
@@ -259,9 +281,16 @@ UNIT
 # NATS
 # =============================================================================
 install_nats() {
+  local needs_restart=0
   if command -v nats-server &>/dev/null; then
-    info "NATS уже установлен: $(nats-server --version)"
-    return
+    local current
+    current=$(nats-server --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    if [[ "$current" == "$NATS_VERSION" ]]; then
+      info "NATS уже установлен в нужной версии: v${current}"
+      return
+    fi
+    log "NATS v${current} отличается от ожидаемой v${NATS_VERSION} — переустановка..."
+    needs_restart=1
   fi
   log "Установка NATS Server v${NATS_VERSION}..."
   local arch tarball base expected
@@ -288,6 +317,15 @@ install_nats() {
   mv "/tmp/nats-server-v${NATS_VERSION}-linux-${arch}/nats-server" /usr/local/bin/nats-server
   chmod +x /usr/local/bin/nats-server
   rm -rf "/tmp/${tarball}" "/tmp/nats-server-v${NATS_VERSION}-linux-${arch}"
+
+  # Если апгрейд на работающей ноде — перезапустить, чтобы systemd подхватил
+  # новый бинарник (старый image остаётся в памяти процесса до restart).
+  # При первой установке systemd-unit ещё не создан (создаётся в setup_nats),
+  # is-active вернёт false → restart пропускается; запуск в start_services.
+  if (( needs_restart )) && systemctl is-active nats &>/dev/null; then
+    log "Перезапуск nats для подхвата нового бинарника..."
+    systemctl restart nats
+  fi
   info "Установлен: $(nats-server --version)"
 }
 
@@ -309,9 +347,9 @@ generate_nats_certs() {
   printf '%s\n' "$NATS_CA_CERT" > "$NATS_CONF_DIR/ca.crt"
   chmod 644 "$NATS_CONF_DIR/ca.crt"
 
-  # CA key — только для подписи, удаляем сразу после
-  printf '%s\n' "$NATS_CA_KEY" > /tmp/nats-ca.key
-  chmod 600 /tmp/nats-ca.key
+  # CA key используется только при подписи node.crt ниже — передаём через
+  # process substitution (<(...)), чтобы ключ ни на один момент не попадал
+  # на ФС. См. openssl x509 -CAkey ниже.
 
   # Ключ ноды: ECDSA P-256 — NIST-current, защита до 2050+, ~3× быстрее
   # TLS-handshake чем RSA-2048. Алгоритм node-key независим от алгоритма CA-key
@@ -329,11 +367,14 @@ generate_nats_certs() {
   # SAN: IP ноды + localhost (для локальных health-check'ов)
   printf 'subjectAltName=IP:%s,IP:127.0.0.1\n' "$NODE_IP" > /tmp/nats-node-san.cnf
 
-  # Подписываем сертификат ноды CA-ключом (10 лет)
+  # Подписываем сертификат ноды CA-ключом (10 лет).
+  # CA-ключ передаём через bash process substitution: openssl получает путь
+  # вида /dev/fd/N, ключ живёт только в памяти bash-процесса и пайпе, на
+  # диск не пишется ни на один момент.
   openssl x509 -req \
     -in /tmp/nats-node.csr \
     -CA "$NATS_CONF_DIR/ca.crt" \
-    -CAkey /tmp/nats-ca.key \
+    -CAkey <(printf '%s\n' "$NATS_CA_KEY") \
     -CAcreateserial \
     -out "$NATS_CONF_DIR/node.crt" \
     -days 3650 \
@@ -342,8 +383,9 @@ generate_nats_certs() {
 
   chmod 644 "$NATS_CONF_DIR/node.crt"
 
-  # CA key немедленно удаляется с сервера
-  rm -f /tmp/nats-ca.key /tmp/nats-node.csr /tmp/nats-node-san.cnf /tmp/nats-ca.srl
+  # Промежуточные файлы (CSR, SAN-конфиг, CA-serial). CA-ключ на диск не
+  # писался — см. process substitution выше.
+  rm -f /tmp/nats-node.csr /tmp/nats-node-san.cnf /tmp/nats-ca.srl
 
   chown nats:nats "$NATS_CONF_DIR/ca.crt" "$NATS_CONF_DIR/node.crt" "$NATS_CONF_DIR/node.key"
 
@@ -386,6 +428,10 @@ cluster {
     verify:    true
     timeout:   5
   }
+
+  # cluster.authorization { user/password } сознательно не используется:
+  # cluster trust полностью основан на mTLS (verify=true) + off-server CA-key.
+  # Подробнее о threat model — prod.md → «Безопасность кластера NATS».
 }
 
 jetstream {
@@ -479,9 +525,23 @@ setup_firewall() {
 start_services() {
   log "Запуск сервисов..."
   systemctl start nats
-  sleep 2
+
+  # Ждём готовности NATS перед запуском Nomad. systemctl is-active вернётся
+  # сразу после fork — до открытия портов и до завершения JetStream recovery.
+  # /healthz отдаёт 200 только после того, как stream/KV-store восстановлены и
+  # сервер готов принимать запросы. Таймаут 60s рассчитан на тяжёлый recovery
+  # (большой /var/lib/nats/jetstream).
+  # Порт 8222 = http_port в deployments/infra/nats/nats.conf. При смене там —
+  # синхронизировать здесь (та же convention, что для 4222/6222/8080).
+  log "Ожидание готовности NATS (JetStream recovery)..."
+  local elapsed=0
+  until curl -sf --max-time 2 "http://127.0.0.1:8222/healthz" &>/dev/null; do
+    sleep 1; elapsed=$((elapsed + 1))
+    [[ $elapsed -lt 60 ]] || die "NATS /healthz не отвечает за 60s"
+  done
+
   systemctl start nomad
-  info "NATS:  $(systemctl is-active nats)"
+  info "NATS:  $(systemctl is-active nats) (готов через ${elapsed}s)"
   info "Nomad: $(systemctl is-active nomad)"
 }
 
@@ -528,7 +588,7 @@ print_summary() {
   printf '  Нода готова: %s\n' "$NODE_IP"
   printf '═══════════════════════════════════════════\n'
   info "NATS мониторинг: http://${NODE_IP}:8222"
-  info "Nomad UI:        http://${NODE_IP}:4646"
+  info "Nomad UI:        ssh -L 4646:127.0.0.1:4646 user@${NODE_IP} → http://localhost:4646"
   printf '\n'
   warn "A-запись ${PLATFORM_DOMAIN} → ${NODE_IP} должна быть добавлена в DNS"
   warn "После добавления DNS-записи нода автоматически войдёт в кластер"

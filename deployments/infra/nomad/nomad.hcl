@@ -16,6 +16,15 @@ log_json  = true
 
 bind_addr = "0.0.0.0"
 
+# HTTP API (4646) слушает только localhost: операции выполняются через SSH +
+# nomad CLI с самой ноды (CI делает то же — SSH→nomad job run). UI / внешний
+# мониторинг — через ssh-tunnel: ssh -L 4646:127.0.0.1:4646 user@node.
+# RPC (4647) и Serf (4648) остаются на 0.0.0.0 — нужны для inter-node трафика.
+# Защищает от случайного открытия порта 4646 наружу при откате ACL/misconfig.
+addresses {
+  http = "127.0.0.1"
+}
+
 advertise {
   http = "${attr.unique.network.ip-address}"
   rpc  = "${attr.unique.network.ip-address}"
@@ -36,6 +45,16 @@ server {
   # в этом окне, может быть потерян. Порядок развёртывания первого кластера —
   # последовательный (см. deployments/envs/prod/prod.md).
   bootstrap_expect = 1
+
+  # raft_multiplier=5 — масштабирует все Raft-таймауты ×5 (heartbeat 1s→5s,
+  # election 1s→5s, leader_lease 0.5s→2.5s). Платформа ориентирована на
+  # multi-DC-развёртывание (ноды могут жить в разных дата-центрах/облаках),
+  # где cross-DC latency ≥50ms и transient packet loss — норма. Default=1
+  # рассчитан на LAN (<10ms) и при WAN-jitter вызывает re-election storms.
+  # Trade-off: leader failover 5-25s вместо 1-5s — приемлемо, платформа не
+  # realtime; стабильность кластера важнее скорости восстановления.
+  # Один и тот же конфиг работает в single-DC и multi-DC без изменений.
+  raft_multiplier = 5
 
   job_gc_threshold        = "4h"
   eval_gc_threshold       = "4h"

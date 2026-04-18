@@ -58,19 +58,19 @@ func RequireAuth(cfg AuthConfig, next nats.MsgHandler) nats.MsgHandler {
 	return func(msg *nats.Msg) {
 		token := utils.GetCookie(msg, "access_token")
 		if token == "" {
-			replyUnauthorized(msg, "access token missing")
+			replyUnauthorized(msg, cfg.Log, "access token missing")
 			return
 		}
 
 		c, err := xauth.VerifyJWT(token, cfg.AccessSecret)
 		if err != nil {
 			cfg.Log.Warn().Err(err).Str("subject", msg.Subject).Msg("RequireAuth: невалидный токен")
-			replyUnauthorized(msg, "invalid access token")
+			replyUnauthorized(msg, cfg.Log, "invalid access token")
 			return
 		}
 
 		if time.Now().Unix() > c.Exp+int64(accessTokenClockSkew.Seconds()) {
-			replyUnauthorized(msg, "access token expired")
+			replyUnauthorized(msg, cfg.Log, "access token expired")
 			return
 		}
 
@@ -88,7 +88,7 @@ func RequireAuth(cfg AuthConfig, next nats.MsgHandler) nats.MsgHandler {
 
 // replyUnauthorized отвечает 401 через reply-subject сообщения.
 // Использует msg.RespondMsg — не требует доступа к *nats.Conn.
-func replyUnauthorized(msg *nats.Msg, text string) {
+func replyUnauthorized(msg *nats.Msg, log zerolog.Logger, text string) {
 	out := nats.NewMsg(msg.Reply)
 	out.Header.Set("Content-Type", "application/json")
 	out.Header.Set("Status", "401")
@@ -97,9 +97,11 @@ func replyUnauthorized(msg *nats.Msg, text string) {
 		Error string `json:"error"`
 	}{Error: text})
 
+	// Сам факт 401 не логируется (нормальный пользовательский кейс — токен протух,
+	// клиент пойдёт на /refresh). Логируется только сбой доставки: пустой Reply,
+	// разорванное соединение и пр. — это означает, что клиент не получил 401
+	// и запрос «утёк» молча.
 	if err := msg.RespondMsg(out); err != nil {
-		// Логировать некуда — функция не имеет доступа к логгеру.
-		// Ошибка здесь означает потерю reply-subject, что крайне редко.
-		_ = err
+		log.Error().Err(err).Str("subject", msg.Subject).Msg("replyUnauthorized: ошибка отправки 401")
 	}
 }

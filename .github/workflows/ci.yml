@@ -79,7 +79,11 @@ jobs:
       - name: Build release binaries
         run: |
           mkdir -p dist
-          for svc in $(ls cmd/); do
+          # cmd/*/ с nullglob — раскрывается только в директории; файл в cmd/
+          # (README, .gitkeep) не попадает в список и не ломает go build.
+          shopt -s nullglob
+          for dir in cmd/*/; do
+            svc="${dir%/}"; svc="${svc#cmd/}"
             for arch in amd64 arm64; do
               GOOS=linux GOARCH=$arch CGO_ENABLED=0 \
                 go build -trimpath -o dist/$svc ./cmd/$svc
@@ -93,7 +97,9 @@ jobs:
         run: |
           # Формат: CS_GATEWAY_AMD64=sha256:<hex>
           # Deploy workflows скачивают этот артефакт и читают как env vars.
-          for svc in $(ls cmd/); do
+          shopt -s nullglob
+          for dir in cmd/*/; do
+            svc="${dir%/}"; svc="${svc#cmd/}"
             for arch in amd64 arm64; do
               varname="CS_$(echo $svc | tr '[:lower:]' '[:upper:]')_$(echo $arch | tr '[:lower:]' '[:upper:]')"
               hash=$(sha256sum "dist/${svc}_linux_${arch}.tar.gz" | awk '{print $1}')

@@ -295,7 +295,7 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 		Str("req", reqID).
 		Str("subject", subject).
 		Int("status", statusCode).
-		Dur("ms", time.Since(start)).
+		Int64("ms", time.Since(start).Milliseconds()).
 		Msg("←")
 }
 

@@ -8,13 +8,14 @@
 # все переменные передаются из GitHub Secrets (см. ci.yml).
 #
 # Использование:
-#   nomad job run \
-#     -var-file=deployments/envs/prod/prod.vars \
-#     deployments/infra/nomad/platform.nomad
 #
-#   nomad job run \
-#     -var-file=deployments/envs/prod/prod.vars \
-#     deployments/infra/nomad/xservices.nomad
+#   # Платформа (всегда):
+#   nomad job run -var-file=deployments/envs/prod/prod.vars deployments/infra/nomad/gateway.nomad
+#
+#   # Демо-сервисы (опционально, не для прод-продуктов):
+#   nomad job run -var-file=deployments/envs/prod/prod.vars deployments/infra/nomad/xauth.nomad
+#   nomad job run -var-file=deployments/envs/prod/prod.vars deployments/infra/nomad/xhttp.nomad
+#   nomad job run -var-file=deployments/envs/prod/prod.vars deployments/infra/nomad/xws.nomad
 
 # GitHub Release (откуда Nomad скачивает бинарники)
 github_repo = ""        # owner/repo, например: myorg/platform.go
@@ -34,11 +35,17 @@ log_level                = "info"
 # xauth
 auth_username       = ""
 auth_password       = ""
-auth_access_secret  = ""   # openssl rand -hex 32
-auth_refresh_secret = ""   # openssl rand -hex 32
-cookie_domain       = ""   # например: ".example.com"
+auth_access_secret  = ""       # openssl rand -hex 32
+auth_refresh_secret = ""       # openssl rand -hex 32
+auth_access_ttl     = "15m"    # default из xauth.nomad
+auth_refresh_ttl    = "168h"   # default из xauth.nomad
+cookie_domain       = ""       # например: ".example.com"
 cookie_secure       = "true"
 
 # xhttp
-database_url  = ""   # postgres://user:password@host:5432/db?sslmode=require
-access_secret = ""   # должен совпадать с auth_access_secret
+database_url  = ""      # postgres://user:password@host:5432/db?sslmode=require
+access_secret = ""      # должен совпадать с auth_access_secret
+cache_ttl     = "30s"   # default из xhttp.nomad
+
+# xws
+inactivity_timeout = "3m"   # default из xws.nomad

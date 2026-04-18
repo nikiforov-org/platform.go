@@ -34,8 +34,10 @@
 | NATS Monitor | http://localhost:8222         |
 
 ```bash
-nomad job status platform    # статус gateway
-nomad job status xservices   # статус демо-сервисов
+nomad job status gateway     # платформа
+nomad job status xauth       # демо
+nomad job status xhttp       # демо
+nomad job status xws         # демо
 nomad alloc logs <alloc-id>  # логи конкретной аллокации
 ```
 
@@ -43,26 +45,24 @@ Health check: `curl http://localhost:8080/health`
 
 ## Переменные окружения
 
-Значения берутся из `dev.vars`. Для изменения отредактируйте файл и перезапустите джобы:
+Значения берутся из `dev.vars`. Для изменения отредактируйте файл и перезапустите окружение — `start.sh` подхватит новые значения и перегенерирует Nomad-джобы:
 
 ```bash
-nomad job run \
-  -var-file=deployments/envs/dev/dev.vars \
-  -var="binary_dir=$PWD/bin" \
-  deployments/infra/nomad/platform.nomad
+./deployments/envs/dev/start.sh stop
+./deployments/envs/dev/start.sh           # или ./start.sh N для N нод
 ```
+
+Внутри `start.sh` рендерит 4 dev-варианта джобов в `/tmp/dev-{gateway,xauth,xhttp,xws}.nomad` (с локальным путём к `./bin/*`) и запускает их через `nomad job run`. Эти временные файлы можно использовать для точечных операций (см. ниже).
 
 ## Проверка поведения кластера (N > 1)
 
 ### Rolling update
 
 ```bash
-# Пересобрать и переразвернуть
+# Пересобрать и перезапустить только gateway
+# (/tmp/dev-gateway.nomad уже сгенерирован start.sh при старте окружения)
 go build -o bin/gateway ./cmd/gateway
-nomad job run \
-  -var-file=deployments/envs/dev/dev.vars \
-  -var="binary_dir=$PWD/bin" \
-  deployments/infra/nomad/platform.nomad
+nomad job run /tmp/dev-gateway.nomad
 
 nomad deployment list   # наблюдать за rolling update
 ```

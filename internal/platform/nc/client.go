@@ -6,6 +6,7 @@ package nc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -260,6 +261,12 @@ func (p *PlatformClient) initKV(cfg KVConfig) error {
 		Storage:      jetstream.FileStorage, // store_dir: "/var/lib/nats/jetstream" в nats.conf
 	})
 	if err != nil {
+		// Любая ошибка кроме «бакет уже создан» — реальный сбой (auth, network,
+		// loss of quorum, неправильная конфигурация). Без явной проверки
+		// fallback на KeyValue(...) маскировал бы её под «бакет недоступен».
+		if !errors.Is(err, jetstream.ErrBucketExists) {
+			return fmt.Errorf("nats: create KV-бакет %q: %w", cfg.BucketName, err)
+		}
 		// Бакет уже существует — просто проверяем доступность.
 		if _, kvErr := p.JS.KeyValue(ctx, cfg.BucketName); kvErr != nil {
 			return fmt.Errorf("nats: KV-бакет %q недоступен: %w", cfg.BucketName, kvErr)
@@ -300,6 +307,22 @@ func (p *PlatformClient) PutValue(ctx context.Context, bucket, key string, value
 
 	if _, err = kv.Put(ctx, key, value); err != nil {
 		return fmt.Errorf("nats: PutValue: ключ %q: %w", key, err)
+	}
+
+	return nil
+}
+
+// Delete помечает ключ как удалённый в указанном KV-бакете (purge marker).
+// Идемпотентно: удаление несуществующего ключа не считается ошибкой.
+// Subsequent GetValue вернёт (nil, nil) через ErrKeyNotFound branch.
+func (p *PlatformClient) Delete(ctx context.Context, bucket, key string) error {
+	kv, err := p.JS.KeyValue(ctx, bucket)
+	if err != nil {
+		return fmt.Errorf("nats: Delete: бакет %q: %w", bucket, err)
+	}
+
+	if err := kv.Delete(ctx, key); err != nil {
+		return fmt.Errorf("nats: Delete: ключ %q: %w", key, err)
 	}
 
 	return nil

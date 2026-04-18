@@ -41,12 +41,11 @@ func (c *cache) Put(ctx context.Context, key string, val []byte) {
 	}
 }
 
-// Invalidate помечает ключи как недействительные через перезапись пустым значением.
-// NATS KV API не гарантирует наличия Delete во всех версиях Go SDK,
-// поэтому используем маркер: пустой []byte распознаётся как промах в Get.
+// Invalidate удаляет ключи из KV-бакета через kv.Delete (purge marker).
+// Subsequent Get вернёт nil — nc.GetValue транслирует ErrKeyNotFound в (nil, nil).
 func (c *cache) Invalidate(ctx context.Context, keys ...string) {
 	for _, key := range keys {
-		if err := c.nc.PutValue(ctx, c.bucket, key, []byte{}); err != nil {
+		if err := c.nc.Delete(ctx, c.bucket, key); err != nil {
 			c.log.Error().Err(err).Str("key", key).Msg("cache.Invalidate")
 		}
 	}

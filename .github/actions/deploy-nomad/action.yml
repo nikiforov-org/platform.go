@@ -111,7 +111,7 @@ runs:
           # -w 300: таймаут 5 минут — больше длительности любого штатного деплоя.
           # Дескриптор 9 закрывается автоматически при выходе из шелла,
           # flock освобождается тоже автоматически.
-          if $SSH "${DEPLOY_USER}@${HOST}" "
+          REMOTE_SCRIPT="
             set -e
             exec 9>/var/lock/platform-deploy.lock
             flock -w 300 -x 9 || { echo 'platform-deploy: lock busy >300s, aborting'; exit 1; }
@@ -124,7 +124,16 @@ runs:
             fi
 
             nomad job run /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
-          "; then
+          "
+
+          # Скрипт уходит на remote через SSH stdin (here-string + bash -s),
+          # не как argv-аргумент к ssh. Это убирает NOMAD_TOKEN и значения
+          # NOMAD_VAR_* из:
+          #   - ps -ef | grep ssh на runner'е (видно другим процессам);
+          #   - sshd EXEC-логов в /var/log/auth.log при LogLevel >= VERBOSE.
+          # printf '%q' для Q_NOMAD_TOKEN остаётся — защита от shell-injection
+          # при спец-символах в токене на стороне remote bash.
+          if $SSH "${DEPLOY_USER}@${HOST}" 'bash -s' <<< "$REMOTE_SCRIPT"; then
             echo "Deployed ${NOMAD_FILE} successfully via $HOST"
             DEPLOYED=true
             break

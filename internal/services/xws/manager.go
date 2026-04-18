@@ -129,14 +129,25 @@ func (m *Manager) remove(sid string) {
 // CloseAll завершает все активные сессии.
 // Вызывается при остановке сервиса (SIGTERM) — браузеры получают CLOSE
 // и не зависают с открытым соединением.
+//
+// Snapshot под локом, закрытие — вне лока: session.close() делает
+// nc.PublishMsg + Unsubscribe, удержание Manager.mu во время сетевого
+// I/O при медленном NATS блокировало бы Open/remove на всё время
+// shutdown'а (до Nomad SIGKILL по kill_timeout).
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	snap := make([]*session, 0, len(m.sessions))
+	for _, sess := range m.sessions {
+		snap = append(snap, sess)
+	}
+	m.sessions = make(map[string]*session)
+	m.mu.Unlock()
 
-	for sid, sess := range m.sessions {
+	// session.close() идемпотентен (sess.mu + closed-флаг), параллельный
+	// remove(sid) для уже-отсутствующего sid — no-op (delete на map).
+	for _, sess := range snap {
 		sess.timer.Stop()
 		sess.close()
-		delete(m.sessions, sid)
 	}
 	m.log.Info().Msg("все сессии закрыты")
 }
