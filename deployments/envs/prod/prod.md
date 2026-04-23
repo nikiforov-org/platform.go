@@ -226,7 +226,7 @@ job "newservice" {
         NATS_HOST   = "127.0.0.1"
         NATS_USER   = var.NATS_USER
         MY_API_KEY  = var.MY_API_KEY
-        HEALTH_ADDR = "127.0.0.1:${NOMAD_PORT_health}"  # обязательно для nc.RegisterHealth
+        HEALTH_ADDR = "${NOMAD_IP_health}:${NOMAD_PORT_health}"  # обязательно для nc.RegisterHealth
         ...
       }
     }

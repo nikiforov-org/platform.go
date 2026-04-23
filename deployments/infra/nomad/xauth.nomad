@@ -144,7 +144,7 @@ job "xauth" {
         AUTH_REFRESH_TTL    = var.AUTH_REFRESH_TTL
         COOKIE_DOMAIN       = var.COOKIE_DOMAIN
         COOKIE_SECURE       = var.COOKIE_SECURE
-        HEALTH_ADDR         = "127.0.0.1:${NOMAD_PORT_health}"
+        HEALTH_ADDR         = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
         LOG_LEVEL           = var.LOG_LEVEL
       }
 

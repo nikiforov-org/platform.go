@@ -106,7 +106,7 @@ job "xws" {
         NATS_USER          = var.NATS_USER
         NATS_PASSWORD      = var.NATS_PASSWORD
         INACTIVITY_TIMEOUT = var.INACTIVITY_TIMEOUT
-        HEALTH_ADDR        = "127.0.0.1:${NOMAD_PORT_health}"
+        HEALTH_ADDR        = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
         LOG_LEVEL          = var.LOG_LEVEL
       }
 

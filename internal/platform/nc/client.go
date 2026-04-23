@@ -225,15 +225,18 @@ func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
 	if cfg.KV.BucketName != "" {
 		kvCfg := cfg.KV
 		if kvCfg.Replicas <= 0 {
-			// Определяем число реплик по числу нод кластера.
-			// DiscoveredServers() — пиры, узнанные из INFO (без seed URL
-			// и без self). +1 за сам connected-сервер — в discovered он не
-			// попадает. Через Servers() считать нельзя: seed и advertise
-			// обычно не совпадают (seed `127.0.0.1:4222`, advertise —
-			// маршрутизируемый IP), дублируются и дают завышенную
-			// оценку (`seed + cluster_size` вместо `cluster_size`), что
-			// ломает placement R=N на N-нодовом кластере.
-			kvCfg.Replicas = len(nc.DiscoveredServers()) + 1
+			// Определяем число реплик по числу нод кластера через
+			// DiscoveredServers() — это полный `connect_urls` из INFO,
+			// NATS 2.x включает сюда все пиры кластера (в т.ч. self).
+			// Через Servers() считать нельзя: seed URL (`127.0.0.1:4222`)
+			// и advertise (маршрутизируемый IP) не совпадают, дублируются
+			// и дают завышенную оценку — `seed + cluster_size` вместо
+			// `cluster_size`, что ломает placement R=N на N-нодовом кластере.
+			// Single-node без кластера: INFO без connect_urls → 0 → 1.
+			kvCfg.Replicas = len(nc.DiscoveredServers())
+			if kvCfg.Replicas < 1 {
+				kvCfg.Replicas = 1
+			}
 			log.Debug().Int("replicas", kvCfg.Replicas).Str("bucket", kvCfg.BucketName).Msg("NATS KV: replicas определены автоматически")
 		}
 		if err := client.initKV(kvCfg); err != nil {

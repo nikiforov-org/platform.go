@@ -427,7 +427,7 @@ job "xauth" {
         AUTH_REFRESH_TTL    = "${auth_refresh_ttl:-168h}"
         COOKIE_DOMAIN       = "$cookie_domain"
         COOKIE_SECURE       = "${cookie_secure:-false}"
-        HEALTH_ADDR         = "127.0.0.1:\${NOMAD_PORT_health}"
+        HEALTH_ADDR         = "\${NOMAD_IP_health}:\${NOMAD_PORT_health}"
         LOG_LEVEL           = "$log_level"
       }
 
@@ -501,7 +501,7 @@ job "xhttp" {
         DATABASE_URL  = "$database_url"
         ACCESS_SECRET = "$access_secret"
         CACHE_TTL     = "${cache_ttl:-30s}"
-        HEALTH_ADDR   = "127.0.0.1:\${NOMAD_PORT_health}"
+        HEALTH_ADDR   = "\${NOMAD_IP_health}:\${NOMAD_PORT_health}"
         LOG_LEVEL     = "$log_level"
       }
 
@@ -573,7 +573,7 @@ job "xws" {
         NATS_USER          = "$nats_user"
         NATS_PASSWORD      = "$nats_password"
         INACTIVITY_TIMEOUT = "${inactivity_timeout:-3m}"
-        HEALTH_ADDR        = "127.0.0.1:\${NOMAD_PORT_health}"
+        HEALTH_ADDR        = "\${NOMAD_IP_health}:\${NOMAD_PORT_health}"
         LOG_LEVEL          = "$log_level"
       }
 

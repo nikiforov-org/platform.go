@@ -118,7 +118,7 @@ job "xhttp" {
         DATABASE_URL  = var.DATABASE_URL
         ACCESS_SECRET = var.ACCESS_SECRET
         CACHE_TTL     = var.CACHE_TTL
-        HEALTH_ADDR   = "127.0.0.1:${NOMAD_PORT_health}"
+        HEALTH_ADDR   = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
         LOG_LEVEL     = var.LOG_LEVEL
       }
 
