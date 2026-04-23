@@ -80,11 +80,32 @@ job "xauth" {
   group "xauth" {
     count = 1
 
+    # Dynamic port для HTTP /healthz. Nomad выделяет свободный порт на 127.0.0.1,
+    # сервис получает его через ${NOMAD_PORT_health}. Probe идёт через тот же
+    # NATS-mux, что и бизнес-handler'ы, — ловит deadlock-в-handler (см. P-M9).
+    network {
+      port "health" {}
+    }
+
     restart {
       attempts = 10
       interval = "5m"
       delay    = "15s"
       mode     = "delay"
+    }
+
+    service {
+      name     = "xauth"
+      port     = "health"
+      provider = "nomad"
+
+      check {
+        name     = "http-health"
+        type     = "http"
+        path     = "/healthz"
+        interval = "10s"
+        timeout  = "3s"
+      }
     }
 
     task "xauth" {
@@ -123,6 +144,7 @@ job "xauth" {
         AUTH_REFRESH_TTL    = var.AUTH_REFRESH_TTL
         COOKIE_DOMAIN       = var.COOKIE_DOMAIN
         COOKIE_SECURE       = var.COOKIE_SECURE
+        HEALTH_ADDR         = "127.0.0.1:${NOMAD_PORT_health}"
         LOG_LEVEL           = var.LOG_LEVEL
       }
 

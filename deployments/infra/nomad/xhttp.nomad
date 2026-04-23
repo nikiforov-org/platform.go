@@ -61,11 +61,30 @@ job "xhttp" {
   group "xhttp" {
     count = 1
 
+    # Dynamic port для HTTP /healthz — probe через NATS-mux (P-M9).
+    network {
+      port "health" {}
+    }
+
     restart {
       attempts = 10
       interval = "5m"
       delay    = "15s"
       mode     = "delay"
+    }
+
+    service {
+      name     = "xhttp"
+      port     = "health"
+      provider = "nomad"
+
+      check {
+        name     = "http-health"
+        type     = "http"
+        path     = "/healthz"
+        interval = "10s"
+        timeout  = "3s"
+      }
     }
 
     task "xhttp" {
@@ -99,6 +118,7 @@ job "xhttp" {
         DATABASE_URL  = var.DATABASE_URL
         ACCESS_SECRET = var.ACCESS_SECRET
         CACHE_TTL     = var.CACHE_TTL
+        HEALTH_ADDR   = "127.0.0.1:${NOMAD_PORT_health}"
         LOG_LEVEL     = var.LOG_LEVEL
       }
 

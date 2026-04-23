@@ -12,6 +12,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"os/signal"
@@ -32,6 +33,11 @@ import (
 func main() {
 	log := logger.New("xhttp")
 	cfg := xhttp.LoadConfig(log)
+
+	healthAddr := os.Getenv("HEALTH_ADDR")
+	if healthAddr == "" {
+		log.Fatal().Msg("HEALTH_ADDR не задан")
+	}
 
 	// 1. PostgreSQL.
 	db, err := sql.Open("postgres", cfg.DatabaseURL)
@@ -58,6 +64,11 @@ func main() {
 	natsClient, err := nc.NewClient(cfg.NATS, log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("NATS")
+	}
+
+	healthSrv, err := natsClient.RegisterHealth("xhttp", healthAddr)
+	if err != nil {
+		log.Fatal().Err(err).Msg("health")
 	}
 
 	h := xhttp.NewHandlers(natsClient, db, cfg, log)
@@ -96,8 +107,15 @@ func main() {
 
 	log.Info().Msg("завершение работы...")
 
-	// Сначала дренируем NATS: in-flight обработчики завершают работу,
+	// Сначала гасим /healthz (Nomad снимает с балансировки), потом
+	// дренируем NATS: in-flight обработчики завершают работу,
 	// новые сообщения не принимаются — новые DB-запросы не стартуют.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := healthSrv.Shutdown(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("health shutdown")
+	}
+	cancel()
+
 	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 15*time.Second)
 	if err := natsClient.Drain(drainTimeout); err != nil {
 		log.Error().Err(err).Msg("NATS drain")

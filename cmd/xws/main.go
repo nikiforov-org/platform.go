@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/signal"
@@ -44,9 +45,19 @@ func main() {
 	log := logger.New("xws")
 	cfg := xws.LoadConfig(log)
 
+	healthAddr := os.Getenv("HEALTH_ADDR")
+	if healthAddr == "" {
+		log.Fatal().Msg("HEALTH_ADDR не задан")
+	}
+
 	natsClient, err := nc.NewClient(cfg.NATS, log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("NATS")
+	}
+
+	healthSrv, err := natsClient.RegisterHealth("xws", healthAddr)
+	if err != nil {
+		log.Fatal().Err(err).Msg("health")
 	}
 
 	mgr := xws.NewManager(natsClient.Conn, cfg.InactivityTimeout, log)
@@ -94,8 +105,16 @@ func main() {
 	<-stop
 
 	log.Info().Msg("завершение работы...")
-	// Закрываем активные WS-сессии до дрейна: NATS-подписки сессий отписываются,
-	// клиентам отправляется Control: CLOSE.
+	// Порядок: /healthz → WS-сессии → NATS drain.
+	// Сначала Nomad снимает аллокацию с балансировки через /healthz 503,
+	// затем закрываем WS-сессии (отписка + Control: CLOSE клиентам),
+	// затем дренируем оставшиеся бизнес-подписки.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := healthSrv.Shutdown(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("health shutdown")
+	}
+	cancel()
+
 	mgr.CloseAll()
 	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 15*time.Second)
 	if err := natsClient.Drain(drainTimeout); err != nil {

@@ -6,10 +6,18 @@ services:
     image: nats:2-alpine
     command: ["-c", "/etc/nats/nats.conf"]
     ports:
-      - "4222-4322:4222"   # первый контейнер → 4222, следующие → 4223, 4224, ...
-      - "8222-8322:8222"   # мониторинг: http://localhost:8222
+      # Для single-node дефолт — фиксированные 4222/8222 (стабильные адреса
+      # для локальных клиентов). Для multi-node start.sh экспортирует диапазоны:
+      # NATS_CLIENT_PORTS="4222-4322:4222", NATS_HTTP_PORTS="8222-8322:8222".
+      # OrbStack port allocator не reset'ит индекс между запусками, поэтому
+      # диапазон для scale=1 даёт непредсказуемые порты (4223, 4224 и т.д.).
+      - "${NATS_CLIENT_PORTS:-4222:4222}"
+      - "${NATS_HTTP_PORTS:-8222:8222}"
     volumes:
-      - ./nats.conf:/etc/nats/nats.conf:ro
+      # Конфиг рендерится start.sh в /tmp/platform-dev-nats.conf в зависимости
+      # от числа нод: для N=1 блок cluster{} опускается (route нa самого себя
+      # блокирует старт JetStream), для N>1 — включается с routes на сервис `nats`.
+      - ${DEV_NATS_CONF:-./nats.conf}:/etc/nats/nats.conf:ro
     networks:
       - platform
 

@@ -51,11 +51,30 @@ job "xws" {
   group "xws" {
     count = 1
 
+    # Dynamic port для HTTP /healthz — probe через NATS-mux (P-M9).
+    network {
+      port "health" {}
+    }
+
     restart {
       attempts = 10
       interval = "5m"
       delay    = "15s"
       mode     = "delay"
+    }
+
+    service {
+      name     = "xws"
+      port     = "health"
+      provider = "nomad"
+
+      check {
+        name     = "http-health"
+        type     = "http"
+        path     = "/healthz"
+        interval = "10s"
+        timeout  = "3s"
+      }
     }
 
     task "xws" {
@@ -87,6 +106,7 @@ job "xws" {
         NATS_USER          = var.NATS_USER
         NATS_PASSWORD      = var.NATS_PASSWORD
         INACTIVITY_TIMEOUT = var.INACTIVITY_TIMEOUT
+        HEALTH_ADDR        = "127.0.0.1:${NOMAD_PORT_health}"
         LOG_LEVEL          = var.LOG_LEVEL
       }
 

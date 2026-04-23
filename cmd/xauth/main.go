@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,9 +30,19 @@ func main() {
 	log := logger.New("xauth")
 	cfg := xauth.LoadConfig(log)
 
+	healthAddr := os.Getenv("HEALTH_ADDR")
+	if healthAddr == "" {
+		log.Fatal().Msg("HEALTH_ADDR не задан")
+	}
+
 	natsClient, err := nc.NewClient(cfg.NATS, log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("NATS")
+	}
+
+	healthSrv, err := natsClient.RegisterHealth("xauth", healthAddr)
+	if err != nil {
+		log.Fatal().Err(err).Msg("health")
 	}
 
 	h := xauth.NewHandlers(natsClient, cfg, log)
@@ -64,6 +75,14 @@ func main() {
 	<-stop
 
 	log.Info().Msg("завершение работы...")
+	// Сначала гасим /healthz — Nomad снимает аллокацию с балансировки,
+	// потом штатно дренируем бизнес-подписки.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := healthSrv.Shutdown(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("health shutdown")
+	}
+	cancel()
+
 	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 15*time.Second)
 	if err := natsClient.Drain(drainTimeout); err != nil {
 		log.Error().Err(err).Msg("NATS drain")

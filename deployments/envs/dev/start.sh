@@ -20,6 +20,7 @@ VARS_FILE="$SCRIPT_DIR/dev.vars"
 BIN_DIR="$ROOT_DIR/bin"
 NOMAD_DATA_BASE="/tmp/platform-dev"
 PID_FILE="/tmp/platform-dev-pids"
+NATS_CONF_RENDERED="/tmp/platform-dev-nats.conf"
 
 # =============================================================================
 # Вывод
@@ -42,14 +43,88 @@ check_deps() {
 }
 
 # =============================================================================
+# Рендер NATS-конфига по числу нод
+#
+# При N=1 блок cluster{} отсутствует: route `nats-route://nats:6222` при
+# scale=1 резолвится в IP самого контейнера, NATS залипает на
+# "Waiting for routing to be established" и JetStream не становится доступным —
+# сервисы падают циклическим рестартом на init KV-бакета.
+#
+# При N>1 route через сервисное имя `nats` (Docker DNS вернёт IP всех
+# контейнеров одного сервиса — полная mesh без правки конфига).
+# =============================================================================
+render_nats_conf() {
+  local nodes=$1
+
+  cat > "$NATS_CONF_RENDERED" <<'CONF_HEAD'
+server_name: $HOSTNAME
+port: 4222
+http_port: 8222
+
+jetstream {
+  store_dir: "/data/jetstream"
+  max_mem:   256M
+  max_file:  10G
+}
+CONF_HEAD
+
+  if [[ $nodes -gt 1 ]]; then
+    cat >> "$NATS_CONF_RENDERED" <<'CONF_CLUSTER'
+
+cluster {
+  name:   "platform-dev"
+  port:   6222
+  routes: ["nats-route://nats:6222"]
+}
+CONF_CLUSTER
+  fi
+}
+
+# =============================================================================
 # Инфраструктура (NATS + PostgreSQL)
 # =============================================================================
 start_infra() {
   local nodes=$1
   log "Запуск инфраструктуры: $nodes нод NATS + PostgreSQL..."
+  render_nats_conf "$nodes"
+  export DEV_NATS_CONF="$NATS_CONF_RENDERED"
+  # single-node — фиксированные порты (стабильные адреса).
+  # multi-node — диапазоны (каждому реплике свой host-port).
+  if [[ $nodes -gt 1 ]]; then
+    export NATS_CLIENT_PORTS="4222-4322:4222"
+    export NATS_HTTP_PORTS="8222-8322:8222"
+  else
+    unset NATS_CLIENT_PORTS NATS_HTTP_PORTS
+  fi
   docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
   docker compose -f "$COMPOSE_FILE" up -d --scale nats="$nodes"
   info "NATS мониторинг: http://localhost:8222"
+}
+
+# =============================================================================
+# Ожидание готовности NATS (JetStream)
+#
+# docker compose up -d возвращается после запуска контейнера, но до готовности
+# JetStream (особенно в кластерном режиме — нужен meta-group leader). Без
+# ожидания сервисы стартуют раньше и получают err_code=10008 на init KV-бакета,
+# что приводит к log.Fatal и циклическому рестарту в Nomad.
+# =============================================================================
+wait_nats() {
+  log "Ожидание готовности NATS (JetStream)..."
+  # Пробим изнутри контейнера: внутри порт всегда 8222, а host-порт при
+  # scale>1 задаётся диапазоном и OrbStack выделяет непредсказуемые значения
+  # (4228-4230/8228-8230 вместо 4222/8222). /healthz?js-meta-only=true
+  # возвращает 200 только после избрания meta-leader в JetStream-кластере.
+  local max_wait=60
+  local elapsed=0
+  until docker compose -f "$COMPOSE_FILE" exec -T nats \
+        wget -q -O /dev/null --timeout=2 "http://localhost:8222/healthz?js-meta-only=true" \
+        &>/dev/null; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    [[ $elapsed -lt $max_wait ]] || die "NATS /healthz не отвечает за ${max_wait}s"
+  done
+  info "NATS готов (${elapsed}s)"
 }
 
 stop_infra() {
@@ -197,6 +272,17 @@ deploy_jobs() {
   # Совместимо с bash 3.2 (macOS).
   eval "$(grep -v '^\s*#' "$VARS_FILE" | grep -v '^\s*$' | sed 's/[[:space:]]*=[[:space:]]*/=/')"
 
+  # Determining фактический host-порт первого NATS-контейнера.
+  # При scale=1 compose публикует 4222:4222 (фиксированно), при scale>1 —
+  # диапазон 4222-4322:4222, OrbStack выделяет произвольные значения
+  # (4228, 4229, ...). Все Nomad-ноды dev-кластера работают на 127.0.0.1
+  # и подключаются к одному и тому же NATS endpoint (кластер реплицирует
+  # сам) — этого достаточно для проверки поведения сервисов.
+  local nats_host_port
+  nats_host_port=$(docker port dev-nats-1 4222/tcp 2>/dev/null | awk -F: '/0\.0\.0\.0:/ {print $NF; exit}')
+  [[ -n "$nats_host_port" ]] || die "не удалось определить host-порт NATS"
+  info "NATS host-порт: $nats_host_port"
+
   # Четыре отдельных джоба — точное соответствие prod (gateway/xauth/xhttp/xws.nomad).
   # Отличие от prod: нет блока artifact, бинарник берётся напрямую из bin/.
 
@@ -243,7 +329,7 @@ job "gateway" {
 
       env {
         NATS_HOST                = "127.0.0.1"
-        NATS_PORT                = "4222"
+        NATS_PORT                = "$nats_host_port"
         NATS_USER                = "$nats_user"
         NATS_PASSWORD            = "$nats_password"
         HTTP_ADDR                = ":8080"
@@ -290,11 +376,29 @@ job "xauth" {
   group "xauth" {
     count = 1
 
+    network {
+      port "health" {}
+    }
+
     restart {
       attempts = 10
       interval = "5m"
       delay    = "15s"
       mode     = "delay"
+    }
+
+    service {
+      name     = "xauth"
+      port     = "health"
+      provider = "nomad"
+
+      check {
+        name     = "http-health"
+        type     = "http"
+        path     = "/healthz"
+        interval = "10s"
+        timeout  = "3s"
+      }
     }
 
     task "xauth" {
@@ -312,7 +416,7 @@ job "xauth" {
 
       env {
         NATS_HOST           = "127.0.0.1"
-        NATS_PORT           = "4222"
+        NATS_PORT           = "$nats_host_port"
         NATS_USER           = "$nats_user"
         NATS_PASSWORD       = "$nats_password"
         AUTH_USERNAME       = "$auth_username"
@@ -323,6 +427,7 @@ job "xauth" {
         AUTH_REFRESH_TTL    = "${auth_refresh_ttl:-168h}"
         COOKIE_DOMAIN       = "$cookie_domain"
         COOKIE_SECURE       = "${cookie_secure:-false}"
+        HEALTH_ADDR         = "127.0.0.1:\${NOMAD_PORT_health}"
         LOG_LEVEL           = "$log_level"
       }
 
@@ -350,11 +455,29 @@ job "xhttp" {
   group "xhttp" {
     count = 1
 
+    network {
+      port "health" {}
+    }
+
     restart {
       attempts = 10
       interval = "5m"
       delay    = "15s"
       mode     = "delay"
+    }
+
+    service {
+      name     = "xhttp"
+      port     = "health"
+      provider = "nomad"
+
+      check {
+        name     = "http-health"
+        type     = "http"
+        path     = "/healthz"
+        interval = "10s"
+        timeout  = "3s"
+      }
     }
 
     task "xhttp" {
@@ -372,12 +495,13 @@ job "xhttp" {
 
       env {
         NATS_HOST     = "127.0.0.1"
-        NATS_PORT     = "4222"
+        NATS_PORT     = "$nats_host_port"
         NATS_USER     = "$nats_user"
         NATS_PASSWORD = "$nats_password"
         DATABASE_URL  = "$database_url"
         ACCESS_SECRET = "$access_secret"
         CACHE_TTL     = "${cache_ttl:-30s}"
+        HEALTH_ADDR   = "127.0.0.1:\${NOMAD_PORT_health}"
         LOG_LEVEL     = "$log_level"
       }
 
@@ -405,11 +529,29 @@ job "xws" {
   group "xws" {
     count = 1
 
+    network {
+      port "health" {}
+    }
+
     restart {
       attempts = 10
       interval = "5m"
       delay    = "15s"
       mode     = "delay"
+    }
+
+    service {
+      name     = "xws"
+      port     = "health"
+      provider = "nomad"
+
+      check {
+        name     = "http-health"
+        type     = "http"
+        path     = "/healthz"
+        interval = "10s"
+        timeout  = "3s"
+      }
     }
 
     task "xws" {
@@ -427,10 +569,11 @@ job "xws" {
 
       env {
         NATS_HOST          = "127.0.0.1"
-        NATS_PORT          = "4222"
+        NATS_PORT          = "$nats_host_port"
         NATS_USER          = "$nats_user"
         NATS_PASSWORD      = "$nats_password"
         INACTIVITY_TIMEOUT = "${inactivity_timeout:-3m}"
+        HEALTH_ADDR        = "127.0.0.1:\${NOMAD_PORT_health}"
         LOG_LEVEL          = "$log_level"
       }
 
@@ -443,9 +586,12 @@ job "xws" {
 }
 NOMAD
 
+  # -detach: nomad job run возвращается сразу после регистрации джоба в Raft,
+  # не дожидаясь деплоймента (min_healthy_time=10s × 4 job = 40s минимум в serial).
+  # Все 4 сервиса стартуют параллельно — Nomad сам разведёт аллокации по нодам.
   for job in gateway xauth xhttp xws; do
-    nomad job run "/tmp/dev-${job}.nomad"
-    info "✓ $job"
+    nomad job run -detach "/tmp/dev-${job}.nomad" >/dev/null
+    info "✓ $job submitted"
   done
 }
 
@@ -489,15 +635,11 @@ stop_all() {
   # Docker инфраструктура
   stop_infra
 
-  # Временные данные Nomad
+  # Временные данные Nomad и рендер NATS-конфига
   rm -rf "$NOMAD_DATA_BASE"
+  rm -f "$NATS_CONF_RENDERED"
 
-  # Завершаем Docker Desktop — сбрасывает port allocator.
-  # Перед следующим start.sh запусти Docker Desktop вручную.
-  log "Завершение Docker Desktop..."
-  osascript -e 'quit app "Docker Desktop"' 2>/dev/null && info "✓ Docker Desktop завершён" || true
-
-  log "Остановлено. Запусти Docker Desktop вручную перед следующим start.sh"
+  log "Остановлено"
 }
 
 # =============================================================================
@@ -534,5 +676,6 @@ else
 fi
 
 wait_nomad "$NODES"
+wait_nats
 deploy_jobs "$BIN_DIR"
 print_status

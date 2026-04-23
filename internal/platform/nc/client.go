@@ -226,11 +226,14 @@ func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
 		kvCfg := cfg.KV
 		if kvCfg.Replicas <= 0 {
 			// Определяем число реплик по числу нод кластера.
-			// conn.Servers() возвращает все известные ноды (seed + обнаруженные через INFO).
-			kvCfg.Replicas = len(nc.Servers())
-			if kvCfg.Replicas < 1 {
-				kvCfg.Replicas = 1
-			}
+			// DiscoveredServers() — пиры, узнанные из INFO (без seed URL
+			// и без self). +1 за сам connected-сервер — в discovered он не
+			// попадает. Через Servers() считать нельзя: seed и advertise
+			// обычно не совпадают (seed `127.0.0.1:4222`, advertise —
+			// маршрутизируемый IP), дублируются и дают завышенную
+			// оценку (`seed + cluster_size` вместо `cluster_size`), что
+			// ломает placement R=N на N-нодовом кластере.
+			kvCfg.Replicas = len(nc.DiscoveredServers()) + 1
 			log.Debug().Int("replicas", kvCfg.Replicas).Str("bucket", kvCfg.BucketName).Msg("NATS KV: replicas определены автоматически")
 		}
 		if err := client.initKV(kvCfg); err != nil {

@@ -191,23 +191,63 @@ variable "MY_API_KEY"  { default = "" }  # сервис-специфичная
 
 job "newservice" {
   ...
-  task "newservice" {
-    driver = "raw_exec"
-    user   = "nomad"  # ОБЯЗАТЕЛЬНО: tasks не должны бегать от root (см. I-H6).
-                      # Системный user 'nomad' создаётся в setup.sh.
-    artifact {
-      source      = "https://github.com/${var.GITHUB_REPO}/releases/download/${var.VERSION}/newservice_linux_${var.ARCH}.tar.gz"
-      destination = "local/"
-      checksum    = var.CHECKSUM
+  group "newservice" {
+    # Dynamic port для /healthz. Probe идёт через NATS-mux сервиса
+    # (nc.RegisterHealth) — ловит deadlock-в-handler, не только process exit.
+    # См. P-M9 в docs/audit/STATUS.md.
+    network {
+      port "health" {}
     }
-    env {
-      NATS_HOST  = "127.0.0.1"
-      NATS_USER  = var.NATS_USER
-      MY_API_KEY = var.MY_API_KEY
-      ...
+
+    service {
+      name     = "newservice"
+      port     = "health"
+      provider = "nomad"
+
+      check {
+        name     = "http-health"
+        type     = "http"
+        path     = "/healthz"
+        interval = "10s"
+        timeout  = "3s"
+      }
+    }
+
+    task "newservice" {
+      driver = "raw_exec"
+      user   = "nomad"  # ОБЯЗАТЕЛЬНО: tasks не должны бегать от root (см. I-H6).
+                        # Системный user 'nomad' создаётся в setup.sh.
+      artifact {
+        source      = "https://github.com/${var.GITHUB_REPO}/releases/download/${var.VERSION}/newservice_linux_${var.ARCH}.tar.gz"
+        destination = "local/"
+        checksum    = var.CHECKSUM
+      }
+      env {
+        NATS_HOST   = "127.0.0.1"
+        NATS_USER   = var.NATS_USER
+        MY_API_KEY  = var.MY_API_KEY
+        HEALTH_ADDR = "127.0.0.1:${NOMAD_PORT_health}"  # обязательно для nc.RegisterHealth
+        ...
+      }
     }
   }
 }
+```
+
+В `main.go` сервиса:
+
+```go
+healthAddr := os.Getenv("HEALTH_ADDR")
+if healthAddr == "" {
+    log.Fatal().Msg("HEALTH_ADDR не задан")
+}
+// ... NewClient ...
+healthSrv, err := natsClient.RegisterHealth("newservice", healthAddr)
+if err != nil {
+    log.Fatal().Err(err).Msg("health")
+}
+// В shutdown (ДО natsClient.Drain):
+healthSrv.Shutdown(ctx)
 ```
 
 **3. Создать deploy workflow**
