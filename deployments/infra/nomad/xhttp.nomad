@@ -46,6 +46,11 @@ variable "LOG_LEVEL" {
   default = "info"
 }
 
+variable "NODES" {
+  description = "Число ready-нод кластера; определяется на prod-сервере через Nomad API. count копий = min(NODES, 3), distinct_hosts обеспечивает размещение на разных нодах."
+  default     = 1
+}
+
 job "xhttp" {
   datacenters = ["dc1"]
   type        = "service"
@@ -59,7 +64,13 @@ job "xhttp" {
   }
 
   group "xhttp" {
-    count = 1
+    # min(NODES, 3): при 1-2 нодах — по одной копии на ноду; при 3+ — 3 копии.
+    # distinct_hosts гарантирует размещение копий на разных нодах.
+    count = min(var.NODES, 3)
+
+    constraint {
+      distinct_hosts = true
+    }
 
     # Dynamic port для HTTP /healthz — probe через NATS-mux (P-M9).
     network {

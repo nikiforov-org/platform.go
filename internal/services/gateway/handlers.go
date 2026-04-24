@@ -253,10 +253,28 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 	ctx, cancel := context.WithTimeout(r.Context(), gw.cfg.HTTP.NATSRequestTimeout)
 	defer cancel()
 
-	resp, err := gw.nats.Conn.RequestMsgWithContext(ctx, msg)
+	// Ретрай на ErrNoResponders: закрывает короткое окно между падением ноды и
+	// появлением живой копии сервиса-получателя на другой. Прочие ошибки (таймаут,
+	// клиентская отмена, disconnect) считаются финальными — повторять их бессмысленно.
+	var resp *nats.Msg
+	attempts := 0
+	for {
+		attempts++
+		resp, err = gw.nats.Conn.RequestMsgWithContext(ctx, msg)
+		if !errors.Is(err, nats.ErrNoResponders) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			break
+		case <-time.After(gw.cfg.HTTP.NATSRetryDelay):
+			continue
+		}
+		break
+	}
 	if err != nil {
 		status, reason := natsRequestErrStatus(r.Context(), err)
-		gw.log.Error().Err(err).Str("req", reqID).Str("subject", subject).Int("status", status).Str("reason", reason).Msg("NATS request error")
+		gw.log.Error().Err(err).Str("req", reqID).Str("subject", subject).Int("attempts", attempts).Int("status", status).Str("reason", reason).Msg("NATS request error")
 		http.Error(w, reason, status)
 		return
 	}
@@ -295,6 +313,7 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 		Str("req", reqID).
 		Str("subject", subject).
 		Int("status", statusCode).
+		Int("attempts", attempts).
 		Int64("ms", time.Since(start).Milliseconds()).
 		Msg("←")
 }

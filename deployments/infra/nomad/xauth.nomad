@@ -65,6 +65,11 @@ variable "LOG_LEVEL" {
   default = "info"
 }
 
+variable "NODES" {
+  description = "Число ready-нод кластера; определяется на prod-сервере через Nomad API. count копий = min(NODES, 3), distinct_hosts обеспечивает размещение на разных нодах."
+  default     = 1
+}
+
 job "xauth" {
   datacenters = ["dc1"]
   type        = "service"
@@ -78,7 +83,14 @@ job "xauth" {
   }
 
   group "xauth" {
-    count = 1
+    # min(NODES, 3): при 1-2 нодах — по одной копии на ноду (max доступной ёмкости);
+    # при 3+ нодах — 3 копии (избыточность на падение любой ноды, без лишних ресурсов).
+    # distinct_hosts гарантирует, что две копии не окажутся на одной ноде.
+    count = min(var.NODES, 3)
+
+    constraint {
+      distinct_hosts = true
+    }
 
     # Dynamic port для HTTP /healthz. Nomad выделяет свободный порт на 127.0.0.1,
     # сервис получает его через ${NOMAD_PORT_health}. Probe идёт через тот же

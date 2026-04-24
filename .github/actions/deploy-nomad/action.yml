@@ -96,6 +96,9 @@ runs:
               CHECKSUM)    VAL="$CHECKSUM_VALUE" ;;
               GITHUB_REPO) VAL="${{ github.repository }}" ;;
               VERSION)     VAL="$DEPLOY_VERSION" ;;
+              # NODES — число ready-нод кластера; CI о нём не знает.
+              # Вычисляется на remote через Nomad API (см. REMOTE_SCRIPT ниже).
+              NODES)       continue ;;
               *)           VAL="${!VAR}" ;;
             esac
             ENV_EXPORTS="${ENV_EXPORTS}export NOMAD_VAR_${VAR}=$(printf '%q' "$VAL")"$'\n'
@@ -111,12 +114,21 @@ runs:
           # -w 300: таймаут 5 минут — больше длительности любого штатного деплоя.
           # Дескриптор 9 закрывается автоматически при выходе из шелла,
           # flock освобождается тоже автоматически.
+          # NOMAD_VAR_NODES (если объявлена в .nomad) вычисляется на remote через
+          # локальный Nomad API — считаем ready-ноды. CI не знает число нод; при
+          # изменении топологии кластера следующий деплой сам подхватит новое значение.
+          NODES_EXPORT=""
+          if echo "$DECLARED" | grep -qx NODES; then
+            NODES_EXPORT='export NOMAD_VAR_NODES=$(curl -sf -H "X-Nomad-Token: $NOMAD_TOKEN" http://127.0.0.1:4646/v1/nodes | jq '"'"'[.[] | select(.Status=="ready")] | length'"'"')'
+          fi
+
           REMOTE_SCRIPT="
             set -e
             exec 9>/var/lock/platform-deploy.lock
             flock -w 300 -x 9 || { echo 'platform-deploy: lock busy >300s, aborting'; exit 1; }
             export NOMAD_TOKEN=$Q_NOMAD_TOKEN
             ${ENV_EXPORTS}
+            ${NODES_EXPORT}
             if [ -d /opt/platform/.git ]; then
               git -C /opt/platform pull
             else

@@ -118,6 +118,8 @@ All configuration is loaded from environment variables only. Each service has a 
 
 All services share `NATS_HOST` (default `127.0.0.1`), `NATS_PORT` (default `4222`), `NATS_USER`, `NATS_PASSWORD`, `LOG_LEVEL` (default `info`; values: `debug`, `info`, `warn`, `error`).
 
+Gateway ретраит NATS-запросы при `ErrNoResponders` (нет живых подписчиков) в пределах `GATEWAY_NATS_REQUEST_TIMEOUT`, с паузой `GATEWAY_NATS_RETRY_DELAY` (default `100ms`) между попытками. Это закрывает короткое окно при перетасовке копий сервиса на другой ноде; прочие ошибки возвращаются клиенту без повторов.
+
 `NATS_KV_REPLICAS` не задаётся — платформа определяет число реплик автоматически по размеру кластера (`len(conn.Servers())`) после подключения к NATS.
 
 **Important dev-only overrides:**
@@ -140,6 +142,7 @@ Key Nomad behaviors:
 - Rolling update: Nomad restarts tasks one at a time → zero-downtime deploys
 - Log rotation: `logs { max_files = 5, max_file_size = 10 }` in job file — no external log agents needed
 - `ReconnectConfig.MaxAttempts = -1` (infinite reconnect) — Nomad handles process lifecycle, not the app
+- x-сервисы разворачиваются в `count = min(NODES, 3)` копий с `distinct_hosts` — при 1-2 нодах по копии на каждую, при 3+ ровно 3 копии. `NODES` (число ready-нод) вычисляется на prod-сервере через Nomad API `/v1/nodes` в момент `nomad job run` — CI об этом числе не знает. Gateway `type = "system"` — копия на каждой ноде по построению.
 
 NATS cluster (production) uses DNS-based route discovery via `deployments/infra/nats/nats.conf`. Services connect to local NATS on `127.0.0.1:4222`.
 

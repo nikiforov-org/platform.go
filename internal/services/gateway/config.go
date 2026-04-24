@@ -91,6 +91,12 @@ type HTTPConfig struct {
 	// не зависает дольше заданного, даже если клиент продолжает ждать.
 	NATSRequestTimeout time.Duration
 
+	// NATSRetryDelay — пауза перед повтором запроса при nats.ErrNoResponders.
+	// Повторы идут, пока не истёк NATSRequestTimeout; это закрывает короткое окно
+	// между падением ноды и появлением живой копии сервиса-получателя на другой
+	// ноде. Задаётся через GATEWAY_NATS_RETRY_DELAY.
+	NATSRetryDelay time.Duration
+
 	// WSConnectTimeout — таймаут ожидания ack от целевого сервиса при открытии
 	// WebSocket-сессии (GATEWAY_WS_CONNECT_TIMEOUT). Если сервис не подписан или
 	// не успел ответить — Gateway закрывает WS-соединение с кодом 1011, чтобы
@@ -108,6 +114,7 @@ type HTTPConfig struct {
 //	HTTP_WRITE_TIMEOUT         — таймаут записи ответа     (формат: 15s) ("15s")
 //	HTTP_IDLE_TIMEOUT          — таймаут keep-alive        (формат: 60s) ("60s")
 //	GATEWAY_NATS_REQUEST_TIMEOUT — таймаут ожидания ответа из NATS (5s)  ("5s")
+//	GATEWAY_NATS_RETRY_DELAY   — пауза перед повтором при ErrNoResponders ("100ms")
 //	GATEWAY_WS_CONNECT_TIMEOUT — таймаут ack от сервиса при WS connect    ("2s")
 //
 //	NATS_HOST                  — хост NATS-сервера                       ("127.0.0.1")
@@ -155,6 +162,7 @@ func LoadConfig(log zerolog.Logger) (Config, error) {
 			WriteTimeout:      utils.GetEnv(log, "HTTP_WRITE_TIMEOUT", 15*time.Second),
 			IdleTimeout:        utils.GetEnv(log, "HTTP_IDLE_TIMEOUT", 60*time.Second),
 			NATSRequestTimeout: utils.GetEnv(log, "GATEWAY_NATS_REQUEST_TIMEOUT", 5*time.Second),
+			NATSRetryDelay:     utils.GetEnv(log, "GATEWAY_NATS_RETRY_DELAY", 100*time.Millisecond),
 			WSConnectTimeout:   utils.GetEnv(log, "GATEWAY_WS_CONNECT_TIMEOUT", 2*time.Second),
 		},
 		NATS:         natsCfg,

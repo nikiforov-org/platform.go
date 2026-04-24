@@ -146,20 +146,6 @@ build_binaries() {
 }
 
 # =============================================================================
-# Nomad: single-node (-dev режим)
-# =============================================================================
-start_nomad_dev() {
-  log "Запуск Nomad (dev, single-node)..."
-  nomad agent -dev \
-    -bind=127.0.0.1 \
-    -log-level=INFO \
-    >> /tmp/platform-dev-nomad.log 2>&1 &
-  echo "$!" >> "$PID_FILE"
-  info "PID $! | Логи: /tmp/platform-dev-nomad.log"
-  info "Nomad UI: http://localhost:4646"
-}
-
-# =============================================================================
 # Loopback-алиасы для multi-node кластера
 #
 # Каждая Nomad-нода сидит на своём адресе 127.0.0.N. Это нужно чтобы gateway
@@ -743,12 +729,8 @@ fi
 start_infra "$NODES"
 build_binaries
 
-if [[ "$NODES" -eq 1 ]]; then
-  start_nomad_dev
-else
-  setup_loopback_aliases "$NODES"
-  start_nomad_cluster "$NODES"
-fi
+setup_loopback_aliases "$NODES"
+start_nomad_cluster "$NODES"
 
 wait_nomad "$NODES"
 wait_nats
