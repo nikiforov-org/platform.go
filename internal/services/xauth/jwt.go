@@ -9,11 +9,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // jwtHeader — неизменяемая base64url-закодированная шапка всех токенов (HS256).
 // Вычислена однократно: base64url({"alg":"HS256","typ":"JWT"})
 const jwtHeader = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+
+// JWTClockSkew — допуск на расхождение часов между подписантом токена и
+// проверяющим. Без него токен, выданный «прямо сейчас» на узле A, при
+// дрейфе NTP на пару секунд может оказаться «истёкшим» на узле B.
+// 60 секунд — стандарт индустрии (RFC 7519 §4.1.4 «small leeway»);
+// применяется единообразно для access и refresh — для любого JWT в платформе.
+const JWTClockSkew = 60 * time.Second
 
 // Claims — полезная нагрузка JWT-токена (подмножество RFC 7519).
 type Claims struct {

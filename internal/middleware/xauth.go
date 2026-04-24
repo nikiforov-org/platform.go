@@ -36,13 +36,6 @@ type AuthConfig struct {
 	Log zerolog.Logger
 }
 
-// accessTokenClockSkew — допуск на расхождение часов между подписантом access-токена
-// и проверяющим сервисом. Без него токен, выписанный «прямо сейчас» на узле A,
-// может оказаться «истёкшим» на узле B при дрейфе NTP на пару секунд.
-// 60 секунд — стандартный для индустрии запас (RFC 7519 §4.1.4 рекомендует
-// «small leeway»); жёстче делать смысла нет — access-токены и так короткоживущие.
-const accessTokenClockSkew = 60 * time.Second
-
 // RequireAuth возвращает NATS-обёртку над next, которая:
 //
 //  1. Извлекает access_token из куки (заголовок "Cookie" в NATS-сообщении).
@@ -69,7 +62,7 @@ func RequireAuth(cfg AuthConfig, next nats.MsgHandler) nats.MsgHandler {
 			return
 		}
 
-		if time.Now().Unix() > c.Exp+int64(accessTokenClockSkew.Seconds()) {
+		if time.Now().Unix() > c.Exp+int64(xauth.JWTClockSkew.Seconds()) {
 			replyUnauthorized(msg, cfg.Log, "access token expired")
 			return
 		}

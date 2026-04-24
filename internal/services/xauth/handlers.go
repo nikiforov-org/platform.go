@@ -84,7 +84,7 @@ func (h *Handlers) HandleRefresh(msg *nats.Msg) {
 		utils.ReplyError(h.log, msg, 401, "invalid refresh token")
 		return
 	}
-	if time.Now().Unix() > c.Exp {
+	if time.Now().Unix() > c.Exp+int64(JWTClockSkew.Seconds()) {
 		utils.ReplyError(h.log, msg, 401, "refresh token expired")
 		return
 	}
@@ -172,7 +172,7 @@ func (h *Handlers) HandleMe(msg *nats.Msg) {
 		utils.ReplyError(h.log, msg, 401, "invalid access token")
 		return
 	}
-	if time.Now().Unix() > c.Exp {
+	if time.Now().Unix() > c.Exp+int64(JWTClockSkew.Seconds()) {
 		utils.ReplyError(h.log, msg, 401, "access token expired")
 		return
 	}
