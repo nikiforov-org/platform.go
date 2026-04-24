@@ -108,22 +108,44 @@ start_infra() {
 # JetStream (особенно в кластерном режиме — нужен meta-group leader). Без
 # ожидания сервисы стартуют раньше и получают err_code=10008 на init KV-бакета,
 # что приводит к log.Fatal и циклическому рестарту в Nomad.
+#
+# Две последовательные проверки, чтобы не зависеть от single-probe'ов:
+#
+#   A. В кластере выбран meta-leader. Берём /jsz на любой живой ноде — поле
+#      meta_cluster.leader не пустое. Эта проверка покрывает «кворум достигнут».
+#
+#   B. Конкретно первая нода (dev-nats-1) принимает JetStream. Все сервисы
+#      подключаются к её host-порту (см. deploy_jobs), поэтому именно её
+#      готовность критична. Используем /healthz?js-server-only=true — он
+#      не требует sync c meta-leader'ом (встречается расхождение: leader
+#      считает follower'а current, а сам follower на self-probe отвечает
+#      «not current» и не сходит с этого состояния — 4-нодный кворум и/или
+#      quirk NATS). Для init KV достаточно того, что JetStream на этой
+#      ноде поднят и кластер в целом имеет лидера.
 # =============================================================================
 wait_nats() {
   log "Ожидание готовности NATS (JetStream)..."
-  # Пробим изнутри контейнера: внутри порт всегда 8222, а host-порт при
-  # scale>1 задаётся диапазоном и OrbStack выделяет непредсказуемые значения
-  # (4228-4230/8228-8230 вместо 4222/8222). /healthz?js-meta-only=true
-  # возвращает 200 только после избрания meta-leader в JetStream-кластере.
   local max_wait=60
   local elapsed=0
+
+  # Шаг A: meta-leader выбран (кворум достигнут).
   until docker compose -f "$COMPOSE_FILE" exec -T nats \
-        wget -q -O /dev/null --timeout=2 "http://localhost:8222/healthz?js-meta-only=true" \
+        wget -q -O - --timeout=2 "http://localhost:8222/jsz" 2>/dev/null \
+        | grep -Eq '"leader":[[:space:]]*"[^"]'; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    [[ $elapsed -lt $max_wait ]] || die "NATS meta-leader не выбран за ${max_wait}s"
+  done
+
+  # Шаг B: dev-nats-1 принимает JetStream (к ней подключаются все сервисы).
+  until docker compose -f "$COMPOSE_FILE" exec -T --index 1 nats \
+        wget -q -O /dev/null --timeout=2 "http://localhost:8222/healthz?js-server-only=true" \
         &>/dev/null; do
     sleep 1
     elapsed=$((elapsed + 1))
-    [[ $elapsed -lt $max_wait ]] || die "NATS /healthz не отвечает за ${max_wait}s"
+    [[ $elapsed -lt $max_wait ]] || die "NATS dev-nats-1 не готов за ${max_wait}s"
   done
+
   info "NATS готов (${elapsed}s)"
 }
 
@@ -292,7 +314,11 @@ wait_nomad() {
 # =============================================================================
 deploy_jobs() {
   local bin_dir=$1
-  log "Деплой джобов (локальные бинарники: $bin_dir)..."
+  local nodes=$2
+  # x-сервисы: count = min(nodes, 3) с distinct_hosts — синхронизировано с prod.
+  # gateway type=system, ему copies не нужен.
+  local copies=$(( nodes < 3 ? nodes : 3 ))
+  log "Деплой джобов (локальные бинарники: $bin_dir, count=$copies)..."
 
   # Загружаем dev.vars как переменные окружения.
   # Формат файла: key = "value" → конвертируем в key="value" и eval.
@@ -405,7 +431,11 @@ job "xauth" {
   }
 
   group "xauth" {
-    count = 1
+    count = $copies
+
+    constraint {
+      distinct_hosts = true
+    }
 
     network {
       port "health" {}
@@ -485,7 +515,11 @@ job "xhttp" {
   }
 
   group "xhttp" {
-    count = 1
+    count = $copies
+
+    constraint {
+      distinct_hosts = true
+    }
 
     network {
       port "health" {}
@@ -560,7 +594,11 @@ job "xws" {
   }
 
   group "xws" {
-    count = 1
+    count = $copies
+
+    constraint {
+      distinct_hosts = true
+    }
 
     network {
       port "health" {}
@@ -734,5 +772,5 @@ start_nomad_cluster "$NODES"
 
 wait_nomad "$NODES"
 wait_nats
-deploy_jobs "$BIN_DIR"
+deploy_jobs "$BIN_DIR" "$NODES"
 print_status
