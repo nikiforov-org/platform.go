@@ -233,9 +233,16 @@ func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
 			// и дают завышенную оценку — `seed + cluster_size` вместо
 			// `cluster_size`, что ломает placement R=N на N-нодовом кластере.
 			// Single-node без кластера: INFO без connect_urls → 0 → 1.
+			// Потолок 5 — жёсткий лимит JetStream на stream replicas (2.10.x,
+			// см. server/const.go StreamMaxReplicas). Без cap сервис при
+			// расширении кластера до 6+ нод падает с
+			// err_code=10052 «maximum replicas is 5».
+			const jsMaxReplicas = 5
 			kvCfg.Replicas = len(nc.DiscoveredServers())
 			if kvCfg.Replicas < 1 {
 				kvCfg.Replicas = 1
+			} else if kvCfg.Replicas > jsMaxReplicas {
+				kvCfg.Replicas = jsMaxReplicas
 			}
 			log.Debug().Int("replicas", kvCfg.Replicas).Str("bucket", kvCfg.BucketName).Msg("NATS KV: replicas определены автоматически")
 		}
