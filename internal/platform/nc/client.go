@@ -233,11 +233,15 @@ func NewClient(cfg Config, log zerolog.Logger) (*PlatformClient, error) {
 			// и дают завышенную оценку — `seed + cluster_size` вместо
 			// `cluster_size`, что ломает placement R=N на N-нодовом кластере.
 			// Single-node без кластера: INFO без connect_urls → 0 → 1.
-			// Потолок 5 — жёсткий лимит JetStream на stream replicas (2.10.x,
-			// см. server/const.go StreamMaxReplicas). Без cap сервис при
-			// расширении кластера до 6+ нод падает с
-			// err_code=10052 «maximum replicas is 5».
-			const jsMaxReplicas = 5
+			// Потолок 3 — практический максимум для отказоустойчивости KV
+			// (переживает падение 1 ноды). R=5 формально возможен, но на
+			// 6+ нодах JetStream meta-cluster не всегда включает всех пиров
+			// в raft-группу сразу после старта, и запрос R=5 ловит
+			// err_code=10005 «no suitable peers for placement» — сервис
+			// падает в рестарт-цикл. R=3 надёжно размещается на любом
+			// кластере ≥3 нод. Жёсткий лимит NATS — 5 (см. server/const.go
+			// StreamMaxReplicas, err_code=10052).
+			const jsMaxReplicas = 3
 			kvCfg.Replicas = len(nc.DiscoveredServers())
 			if kvCfg.Replicas < 1 {
 				kvCfg.Replicas = 1
@@ -265,31 +269,49 @@ func (p *PlatformClient) initKV(cfg KVConfig) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := p.JS.CreateKeyValue(ctx, jetstream.KeyValueConfig{
-		Bucket:       cfg.BucketName,
-		Description:  "Platform Shared State",
-		Replicas:     cfg.Replicas,
-		History:      cfg.History,
-		MaxValueSize: cfg.MaxValueSize,
-		Storage:      jetstream.FileStorage, // store_dir: "/var/lib/nats/jetstream" в nats.conf
-	})
-	if err != nil {
-		// Любая ошибка кроме «бакет уже создан» — реальный сбой (auth, network,
-		// loss of quorum, неправильная конфигурация). Без явной проверки
-		// fallback на KeyValue(...) маскировал бы её под «бакет недоступен».
-		if !errors.Is(err, jetstream.ErrBucketExists) {
-			return fmt.Errorf("nats: create KV-бакет %q: %w", cfg.BucketName, err)
-		}
-		// Бакет уже существует — просто проверяем доступность.
-		if _, kvErr := p.JS.KeyValue(ctx, cfg.BucketName); kvErr != nil {
-			return fmt.Errorf("nats: KV-бакет %q недоступен: %w", cfg.BucketName, kvErr)
-		}
-		p.log.Info().Str("bucket", cfg.BucketName).Msg("NATS KV: бакет уже существует, подключаемся")
-		return nil
+	// При err_code=10005 «no suitable peers for placement» пробуем понизить R
+	// на 1 и повторить. Причина: JetStream meta-cluster может включать меньше
+	// нод, чем видит route-level (`DiscoveredServers()`) — особенно первые
+	// секунды после старта кластера или при 6+ нодах, где meta-raft
+	// формируется не сразу на всех. Идём от cfg.Replicas вниз до 1.
+	replicas := cfg.Replicas
+	if replicas < 1 {
+		replicas = 1
 	}
+	for {
+		_, err := p.JS.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+			Bucket:       cfg.BucketName,
+			Description:  "Platform Shared State",
+			Replicas:     replicas,
+			History:      cfg.History,
+			MaxValueSize: cfg.MaxValueSize,
+			Storage:      jetstream.FileStorage, // store_dir: "/var/lib/nats/jetstream" в nats.conf
+		})
+		if err == nil {
+			p.log.Info().Str("bucket", cfg.BucketName).Int("replicas", replicas).Uint8("history", cfg.History).Msg("NATS KV: бакет создан")
+			return nil
+		}
 
-	p.log.Info().Str("bucket", cfg.BucketName).Int("replicas", cfg.Replicas).Uint8("history", cfg.History).Msg("NATS KV: бакет создан")
-	return nil
+		if errors.Is(err, jetstream.ErrBucketExists) {
+			// Бакет уже существует — просто проверяем доступность.
+			if _, kvErr := p.JS.KeyValue(ctx, cfg.BucketName); kvErr != nil {
+				return fmt.Errorf("nats: KV-бакет %q недоступен: %w", cfg.BucketName, kvErr)
+			}
+			p.log.Info().Str("bucket", cfg.BucketName).Msg("NATS KV: бакет уже существует, подключаемся")
+			return nil
+		}
+
+		// Placement-ошибка — понижаем R и пробуем ещё раз.
+		var jsErr jetstream.JetStreamError
+		if errors.As(err, &jsErr) && jsErr.APIError() != nil && jsErr.APIError().ErrorCode == 10005 && replicas > 1 {
+			p.log.Warn().Int("replicas", replicas).Err(err).Msg("NATS KV: нет пиров для placement, снижаю replicas")
+			replicas--
+			continue
+		}
+
+		// Любая другая ошибка — реальный сбой (auth, network, loss of quorum).
+		return fmt.Errorf("nats: create KV-бакет %q: %w", cfg.BucketName, err)
+	}
 }
 
 // GetValue возвращает значение ключа из указанного KV-бакета.
