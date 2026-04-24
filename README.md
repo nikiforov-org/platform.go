@@ -81,6 +81,18 @@ Dev-окружение с Nomad запускается одной командо
 
 Подробная инструкция, проверка self-healing и rolling update — в `deployments/envs/dev/dev.md`.
 
+### Тестовый фронтенд
+
+В каталоге `xfrontend/` лежит простой React-клиент для ручной проверки демо-сервисов (xauth, xhttp, xws). Префикс `x` — то же соглашение, что и у демо-сервисов: всё относящееся к `x*` удаляется при использовании платформы в реальном проекте.
+
+```bash
+cd xfrontend
+npm install
+npm run dev      # http://localhost:5173
+```
+
+По умолчанию фронт ходит относительными путями через Vite dev-proxy на Gateway (`http://localhost:8080`), поэтому HttpOnly-куки работают без CORS. Переменная `VITE_GATEWAY_URL` (`.env`) позволяет указать абсолютный URL Gateway — тогда фронт ходит напрямую (CORS на стороне Gateway не реализован, для этого режима нужен reverse-proxy). Допустимые origin'ы в `deployments/envs/dev/dev.vars` уже включают `localhost:5173`.
+
 ## Схема CI/CD (GitHub Actions)
 
 Деплой происходит без участия Docker Registry, напрямую на серверы.
@@ -168,6 +180,8 @@ KV использовать только для кэша, сессий и вре
 │   ├── hosts.go                      # AllowedHostSet — валидация CORS-origin
 │   ├── reply.go                      # Хелперы для NATS-ответов (JSON-конверт)
 │   └── cookie.go                     # Парсинг и сборка Set-Cookie заголовков
+│
+├── xfrontend/                       # [DEMO] React/Vite клиент для ручного тестирования x-сервисов
 │
 ├── deployments/
 │   ├── infra/                        # Конфиги сервисов, не зависящие от окружения
