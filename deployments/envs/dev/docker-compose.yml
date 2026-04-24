@@ -4,7 +4,11 @@ services:
   # Docker DNS резолвит имя сервиса `nats` во все запущенные контейнеры.
   nats:
     image: nats:2-alpine
-    command: ["-c", "/etc/nats/nats.conf"]
+    # server_name задаём через -n с подстановкой hostname внутри контейнера:
+    # в конфиг-файле подстановка $HOSTNAME ненадёжна (парсер NATS спотыкается
+    # на container ID вида "0728099392e2" — трактует как float).
+    entrypoint: ["/bin/sh", "-c"]
+    command: ['exec nats-server -n "nats-$$(hostname)" -c /etc/nats/nats.conf']
     ports:
       # Для single-node дефолт — фиксированные 4222/8222 (стабильные адреса
       # для локальных клиентов). Для multi-node start.sh экспортирует диапазоны:

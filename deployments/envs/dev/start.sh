@@ -56,8 +56,11 @@ check_deps() {
 render_nats_conf() {
   local nodes=$1
 
+  # server_name передаётся флагом -n из docker-compose command (см. docker-compose.yml):
+  # подстановка $HOSTNAME в конфиг-файле не работает надёжно — парсер NATS
+  # воспринимает container ID начинающийся с цифр как число, а форма `nats-$HOSTNAME`
+  # не подставляет переменную в середине токена.
   cat > "$NATS_CONF_RENDERED" <<'CONF_HEAD'
-server_name: $HOSTNAME
 port: 4222
 http_port: 8222
 
@@ -124,18 +127,23 @@ start_infra() {
 #      ноде поднят и кластер в целом имеет лидера.
 # =============================================================================
 wait_nats() {
+  local nodes=$1
   log "Ожидание готовности NATS (JetStream)..."
   local max_wait=60
   local elapsed=0
 
-  # Шаг A: meta-leader выбран (кворум достигнут).
-  until docker compose -f "$COMPOSE_FILE" exec -T nats \
-        wget -q -O - --timeout=2 "http://localhost:8222/jsz" 2>/dev/null \
-        | grep -Eq '"leader":[[:space:]]*"[^"]'; do
-    sleep 1
-    elapsed=$((elapsed + 1))
-    [[ $elapsed -lt $max_wait ]] || die "NATS meta-leader не выбран за ${max_wait}s"
-  done
+  # Шаг A (только multi-node): meta-leader выбран (кворум достигнут).
+  # При N=1 блок cluster{} в nats.conf отсутствует → meta-raft'а нет,
+  # поле meta_cluster.leader пустое всегда. Пропускаем эту проверку.
+  if [[ $nodes -gt 1 ]]; then
+    until docker compose -f "$COMPOSE_FILE" exec -T nats \
+          wget -q -O - --timeout=2 "http://localhost:8222/jsz" 2>/dev/null \
+          | grep -Eq '"leader":[[:space:]]*"[^"]'; do
+      sleep 1
+      elapsed=$((elapsed + 1))
+      [[ $elapsed -lt $max_wait ]] || die "NATS meta-leader не выбран за ${max_wait}s"
+    done
+  fi
 
   # Шаг B: dev-nats-1 принимает JetStream (к ней подключаются все сервисы).
   until docker compose -f "$COMPOSE_FILE" exec -T --index 1 nats \
@@ -771,6 +779,6 @@ setup_loopback_aliases "$NODES"
 start_nomad_cluster "$NODES"
 
 wait_nomad "$NODES"
-wait_nats
+wait_nats "$NODES"
 deploy_jobs "$BIN_DIR" "$NODES"
 print_status
