@@ -160,47 +160,79 @@ start_nomad_dev() {
 }
 
 # =============================================================================
+# Loopback-алиасы для multi-node кластера
+#
+# Каждая Nomad-нода сидит на своём адресе 127.0.0.N. Это нужно чтобы gateway
+# мог запускаться с `type = "system"` (как в проде — по одному на ноду) и не
+# получать «адрес уже занят» на общем 127.0.0.1:8080.
+#
+# На Linux адреса 127.0.0.2..127.0.0.N работают из коробки (loopback /8).
+# На macOS их нужно добавлять вручную через ifconfig — скрипт делает это сам,
+# спрашивая sudo один раз. При остановке те же алиасы убираются.
+#
+# Если алиас уже существует от предыдущего запуска, `ifconfig -alias` убирает
+# его без ошибки (молча), потом `ifconfig alias` создаёт заново.
+# =============================================================================
+setup_loopback_aliases() {
+  local nodes=$1
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  [[ $nodes -gt 1 ]] || return 0
+
+  log "Настройка loopback-алиасов 127.0.0.2..127.0.0.$nodes (потребуется sudo)..."
+  for ((i=2; i<=nodes; i++)); do
+    sudo ifconfig lo0 -alias "127.0.0.$i" 2>/dev/null || true
+    sudo ifconfig lo0 alias "127.0.0.$i" up
+    info "алиас 127.0.0.$i"
+  done
+}
+
+teardown_loopback_aliases() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  # Перебираем все возможные адреса которые мы могли создать
+  # (ifconfig покажет только реально привязанные; остальные — no-op).
+  local aliases
+  aliases=$(ifconfig lo0 2>/dev/null | awk '/inet 127\.0\.0\.[0-9]+ / && $2!="127.0.0.1" {print $2}')
+  [[ -n "$aliases" ]] || return 0
+  log "Удаление loopback-алиасов (потребуется sudo)..."
+  for addr in $aliases; do
+    sudo ifconfig lo0 -alias "$addr" 2>/dev/null && info "убран $addr" || true
+  done
+}
+
+# =============================================================================
 # Nomad: multi-node кластер
 # =============================================================================
-# Каждый агент работает на 127.0.0.1 с разными портами.
-# Порты агента i: http=4646+i*10, rpc=4647+i*10, serf=4648+i*10
-#
-# На Linux 127.x.x.x работает без настройки.
-# На macOS нужны loopback-алиасы (скрипт добавит их через sudo ifconfig).
+# Каждый агент привязан к своему адресу 127.0.0.N, порты у всех одинаковые
+# (4646/4647/4648) — конфликта нет, так как адреса разные.
+# Нода i → 127.0.0.i.
 start_nomad_cluster() {
   local nodes=$1
   log "Запуск Nomad-кластера: $nodes нод..."
 
-  local os
-  os="$(uname -s)"
-
   for ((i=1; i<=nodes; i++)); do
     local data_dir="$NOMAD_DATA_BASE/node$i"
     local log_file="/tmp/platform-dev-nomad-$i.log"
-    local http_port=$((4646 + (i - 1) * 10))
-    local rpc_port=$((4647  + (i - 1) * 10))
-    local serf_port=$((4648  + (i - 1) * 10))
+    local addr="127.0.0.$i"
 
     mkdir -p "$data_dir"
 
-    # Генерируем конфиг ноды
     cat > "$data_dir/agent.hcl" <<HCL
 name      = "node-$i"
 data_dir  = "$data_dir"
 log_level = "INFO"
 log_json  = true
-bind_addr = "127.0.0.1"
+bind_addr = "$addr"
 
 advertise {
-  http = "127.0.0.1:$http_port"
-  rpc  = "127.0.0.1:$rpc_port"
-  serf = "127.0.0.1:$serf_port"
+  http = "$addr:4646"
+  rpc  = "$addr:4647"
+  serf = "$addr:4648"
 }
 
 ports {
-  http = $http_port
-  rpc  = $rpc_port
-  serf = $serf_port
+  http = 4646
+  rpc  = 4647
+  serf = 4648
 }
 
 server {
@@ -209,12 +241,21 @@ server {
 }
 
 client {
-  enabled = true
+  enabled           = true
+  network_interface = "lo0"
+
+  # host_network «node» привязана к конкретному loopback-адресу этой ноды.
+  # Порты аллокаций с host_network="node" резолвятся именно в этот адрес,
+  # благодаря чему gateway (static=8080) может запускаться на всех нодах
+  # одновременно — каждый биндит свой 127.0.0.N:8080.
+  host_network "node" {
+    cidr = "$addr/32"
+  }
+
   options = { "driver.raw_exec.enable" = "1" }
 }
 HCL
 
-    # Флаг join — все ноды, кроме первой, джойнятся к первой
     local join_flag=""
     if [[ $i -gt 1 ]]; then
       join_flag="-join=127.0.0.1:4648"
@@ -224,10 +265,10 @@ HCL
       >> "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" >> "$PID_FILE"
-    info "Нода $i: http=:$http_port | PID=$pid | Логи: $log_file"
+    info "Нода $i: $addr:4646 | PID=$pid | Логи: $log_file"
   done
 
-  info "Nomad UI: http://localhost:4646"
+  info "Nomad UI: http://127.0.0.1:4646"
 }
 
 # =============================================================================
@@ -289,21 +330,24 @@ deploy_jobs() {
   cat > /tmp/dev-gateway.nomad << NOMAD
 job "gateway" {
   datacenters = ["dc1"]
-  type        = "service"
+  # type = "system" — один экземпляр на каждую Nomad-ноду. Синхронизировано
+  # с deployments/infra/nomad/gateway.nomad. В multi-node dev работает за счёт
+  # loopback-алиасов: каждая нода на своём 127.0.0.N, конфликта на :8080 нет.
+  type        = "system"
 
   update {
-    max_parallel     = 1
-    min_healthy_time = "10s"
-    healthy_deadline = "3m"
-    auto_revert      = true
+    max_parallel      = 1
+    min_healthy_time  = "10s"
+    healthy_deadline  = "3m"
+    progress_deadline = "10m"
+    auto_revert       = true
   }
 
   group "gateway" {
-    count = 1
-
     network {
       port "http" {
-        static = 8080
+        static       = 8080
+        host_network = "node"
       }
     }
 
@@ -332,7 +376,7 @@ job "gateway" {
         NATS_PORT                = "$nats_host_port"
         NATS_USER                = "$nats_user"
         NATS_PASSWORD            = "$nats_password"
-        HTTP_ADDR                = ":8080"
+        HTTP_ADDR                = "\${NOMAD_IP_http}:8080"
         ALLOWED_HOSTS            = "$allowed_hosts"
         GATEWAY_AUTH_RATE_PREFIX = "$gateway_auth_rate_prefix"
         LOG_LEVEL                = "$log_level"
@@ -370,6 +414,7 @@ job "xauth" {
     max_parallel     = 1
     min_healthy_time = "10s"
     healthy_deadline = "3m"
+    progress_deadline = "10m"
     auto_revert      = true
   }
 
@@ -449,6 +494,7 @@ job "xhttp" {
     max_parallel     = 1
     min_healthy_time = "10s"
     healthy_deadline = "3m"
+    progress_deadline = "10m"
     auto_revert      = true
   }
 
@@ -523,6 +569,7 @@ job "xws" {
     max_parallel     = 1
     min_healthy_time = "10s"
     healthy_deadline = "3m"
+    progress_deadline = "10m"
     auto_revert      = true
   }
 
@@ -639,6 +686,9 @@ stop_all() {
   rm -rf "$NOMAD_DATA_BASE"
   rm -f "$NATS_CONF_RENDERED"
 
+  # Loopback-алиасы (macOS)
+  teardown_loopback_aliases
+
   log "Остановлено"
 }
 
@@ -672,6 +722,7 @@ build_binaries
 if [[ "$NODES" -eq 1 ]]; then
   start_nomad_dev
 else
+  setup_loopback_aliases "$NODES"
   start_nomad_cluster "$NODES"
 fi
 
