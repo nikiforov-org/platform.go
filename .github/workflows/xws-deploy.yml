@@ -34,7 +34,7 @@ jobs:
       INACTIVITY_TIMEOUT: ${{ vars.INACTIVITY_TIMEOUT || '3m' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download checksums
         uses: actions/download-artifact@v4
