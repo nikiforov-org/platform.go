@@ -24,10 +24,12 @@ func Recover(log zerolog.Logger, next nats.MsgHandler) nats.MsgHandler {
 	return func(msg *nats.Msg) {
 		defer func() {
 			if r := recover(); r != nil {
+				// Bytes() сериализует в base64 — нечитаемо в JSON-логах. Str()
+				// JSON-escape'ит \n и оставляет stack trace разбираемым через jq.
 				event := log.Error().
 					Str("subject", msg.Subject).
 					Interface("panic", r).
-					Bytes("stack", debug.Stack())
+					Str("stack", string(debug.Stack()))
 				if reqID := msg.Header.Get("X-Request-Id"); reqID != "" {
 					event = event.Str("req", reqID)
 				}

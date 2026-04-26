@@ -154,7 +154,7 @@ func LoadConfig(log zerolog.Logger) (Config, error) {
 	natsCfg.Reconnect.WaitDuration = utils.GetEnv(log, "NATS_RECONNECT_WAIT", 2*time.Second)
 	natsCfg.KV.BucketName = "" // Gateway не использует KV — инициализация бакета не нужна.
 
-	return Config{
+	cfg := Config{
 		HTTP: HTTPConfig{
 			Addr:              utils.GetEnv(log, "HTTP_ADDR", ":8080"),
 			ReadHeaderTimeout: utils.GetEnv(log, "HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
@@ -177,5 +177,39 @@ func LoadConfig(log zerolog.Logger) (Config, error) {
 			TrustedProxy:   utils.GetEnv(log, "GATEWAY_TRUSTED_PROXY", ""),
 			MaxIPs:         utils.GetEnv(log, "GATEWAY_RATE_LIMIT_MAX_IPS", 100_000),
 		},
-	}, nil
+	}
+
+	if err := validateRateLimit(cfg.RateLimit); err != nil {
+		return Config{}, err
+	}
+
+	return cfg, nil
+}
+
+// validateRateLimit отбивает misconfig оператора на старте: 0 или negative
+// значения проходили GetEnv молча и приводили к silent degradation
+// (rate.Limit(0) отклоняет всё, MaxIPs<=0 ломает eviction-условие, MaxWSConns<=0
+// отвергает все WS). Лучше fail-fast в LoadConfig — оператор видит ошибку сразу.
+func validateRateLimit(rl RateLimitConfig) error {
+	if rl.Rate <= 0 {
+		return fmt.Errorf("GATEWAY_RATE_LIMIT must be > 0, got %v", rl.Rate)
+	}
+	if rl.Burst <= 0 {
+		return fmt.Errorf("GATEWAY_RATE_BURST must be > 0, got %d", rl.Burst)
+	}
+	if rl.MaxIPs <= 0 {
+		return fmt.Errorf("GATEWAY_RATE_LIMIT_MAX_IPS must be > 0, got %d", rl.MaxIPs)
+	}
+	if rl.MaxWSConns <= 0 {
+		return fmt.Errorf("GATEWAY_MAX_WS_CONNS must be > 0, got %d", rl.MaxWSConns)
+	}
+	if rl.AuthPathPrefix != "" {
+		if rl.AuthRate <= 0 {
+			return fmt.Errorf("GATEWAY_AUTH_RATE_LIMIT must be > 0 when GATEWAY_AUTH_RATE_PREFIX is set, got %v", rl.AuthRate)
+		}
+		if rl.AuthBurst <= 0 {
+			return fmt.Errorf("GATEWAY_AUTH_RATE_BURST must be > 0 when GATEWAY_AUTH_RATE_PREFIX is set, got %d", rl.AuthBurst)
+		}
+	}
+	return nil
 }

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Audit status
 
-Единый рабочий файл аудита платформы: [`docs/audit/STATUS.md`](docs/audit/STATUS.md). Читать в начале любой сессии, связанной с правкой/разбором кода. Источник правды о состоянии открытых (`- [ ]`) и закрытых (`- [x]`) находок. Приоритет: Critical > High > Medium > Low. ID находок стабильные (`P-C1`, `I-H2`, `D-M3`, `G4` — P=platform, I=infra/CI, D=demo, G=global). После фикса — поменять чекбокс на `[x]` с пометкой даты и краткого описания, в том же файле.
+Единый рабочий файл аудита платформы: [`audit/STATUS.md`](audit/STATUS.md). Читать в начале любой сессии, связанной с правкой/разбором кода. Источник правды о состоянии открытых (`- [ ]`) и закрытых (`- [x]`) находок. Приоритет: Critical > High > Medium > Low. ID находок стабильные (`P-C1`, `I-H2`, `D-M3`, `G4` — P=platform, I=infra/CI, D=demo, G=global). После фикса — поменять чекбокс на `[x]` с пометкой даты и краткого описания, в том же файле.
 
 ## Local Development
 
@@ -41,13 +41,49 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/...
 
 ## Testing
 
-No tests exist yet. When writing tests:
+```bash
+# Unit tests с race detector (требует CGO; ubuntu-latest и macOS — ок).
+go test -race ./...
+
+# Integration тесты — embedded NATS (github.com/nats-io/nats-server/v2/test),
+# поднимаются прямо в test-процессе, без docker/compose.
+go test -race -tags=integration ./...
+
+# Один тест.
+go test -v -race -run TestName ./internal/services/gateway/...
+```
+
+**Структура:**
+- `_test.go` рядом с кодом — Go-стандарт.
+- Unit-тесты: без build-тегов.
+- Integration-тесты: build tag `//go:build integration` в первой строке файла.
+- Postgres-зависимые тесты будут поднимать сервис через GHA `services: postgres:17` (когда появятся).
+- `internal/testutil/` создаётся, когда хелпер (embedded NATS, JWT-генератор, fixture-loader) дублируется в 3+ пакетах.
+
+**Линтер:**
+- `_test.go` — errcheck отключён, gosec G404|G101 отключены (см. `.golangci.yml`).
+- В тестах допустимы `defer rows.Close()` без проверки и `math/rand` для test-данных.
+
+## Metrics
+
+Prometheus-метрики Gateway отдаются через отдельный HTTP-эндпоинт на loopback:
 
 ```bash
-go test ./...
-go test -v -race ./...
-go test -run TestName ./internal/services/xhttp/...
+# По умолчанию — 127.0.0.1:8081 (GATEWAY_METRICS_ADDR).
+curl http://127.0.0.1:8081/metrics
 ```
+
+Bind на loopback осознанно: на prod-сервере `/metrics` достижим через тот же SSH-tunnel, что и Nomad UI (`4646`); внешняя экспозиция не нужна, multi-DC агрегация — через Prometheus federation.
+
+Платформенные метрики (`internal/platform/metrics/`):
+- `gateway_http_requests_total{service,method,status}` — Counter, общее число HTTP-запросов через Gateway.
+- `gateway_http_request_duration_seconds{service,method}` — Histogram, end-to-end длительность.
+- `gateway_ws_connections_active` — Gauge, текущее число открытых WS.
+- `gateway_rate_limit_rejected_total{kind}` — Counter, отклонённые rate limiter (kind=`general`|`auth`).
+- `nats_request_duration_seconds{service}` — Histogram, NATS Request-Reply round-trip.
+- `nats_request_attempts_total{service,outcome}` — Counter, попытки NATS-запроса (outcome=`ok`|`no_responders`|`timeout`|`canceled`|`error`).
+
+Бесплатно от `prometheus/client_golang`: `go_*` (память, GC, goroutines), `process_*` (CPU, FDs).
 
 ## Demo vs. Platform Code
 

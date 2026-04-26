@@ -11,6 +11,8 @@
 #
 # Требует в env вызывающего workflow:
 #   DEPLOY_SSH_KEY, DEPLOY_USER, PLATFORM_DOMAIN, NOMAD_TOKEN
+#   HOST_FINGERPRINTS — список SHA256:... fingerprints прод-нод (multi-line или
+#                       comma-separated). Пустой → TOFU режим (WARN в логе).
 #   CS_<SVC>_AMD64, CS_<SVC>_ARM64  — из артефакта checksums
 #   + все переменные объявленные в .nomad файле
 
@@ -39,18 +41,78 @@ runs:
         # на /tmp. trap EXIT гарантирует cleanup на любом пути выхода (ошибка,
         # сигнал), а не только при штатном rm -f в конце скрипта.
         KEY_FILE=$(mktemp)
-        trap 'rm -f "$KEY_FILE"' EXIT
+        KNOWN_HOSTS_FILE=$(mktemp)
+        trap 'rm -f "$KEY_FILE" "$KNOWN_HOSTS_FILE"' EXIT
         echo "$DEPLOY_SSH_KEY" > "$KEY_FILE"
-        SSH="ssh -i $KEY_FILE \
-          -o StrictHostKeyChecking=no \
-          -o BatchMode=yes \
-          -o ConnectTimeout=10 \
-          -o ServerAliveInterval=30 \
-          -o ServerAliveCountMax=10"
 
         # Резолвим все A-записи PLATFORM_DOMAIN.
         HOSTS=$(dig +short "$PLATFORM_DOMAIN" A | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
         [ -n "$HOSTS" ] || { echo "DNS lookup failed for $PLATFORM_DOMAIN"; exit 1; }
+
+        # Собираем host keys всех нод. Симметрия с setup.yml (I-H5):
+        # при заполненном HOST_FINGERPRINTS — сверка с allow-list, чтобы MITM
+        # на маршруте между runner и прод-нодой не подменил ключ незаметно
+        # (NOMAD_TOKEN и все NOMAD_VAR_* секреты передаются по этому SSH-сеансу).
+        # Пустой HOST_FINGERPRINTS → TOFU: ssh-keyscan принимаем как есть, но
+        # дальше SSH идёт с StrictHostKeyChecking=yes — подмена внутри одного run
+        # уже отлавливается. Для полноценной защиты оператор задаёт секрет.
+        ssh-keyscan -t ed25519,ecdsa,rsa $HOSTS > "$KNOWN_HOSTS_FILE" 2>/dev/null
+        [ -s "$KNOWN_HOSTS_FILE" ] || { echo "ssh-keyscan: пустой ответ для всех хостов"; exit 1; }
+
+        echo "Host key fingerprints:"
+        ssh-keygen -lf "$KNOWN_HOSTS_FILE"
+
+        if [ -n "$HOST_FINGERPRINTS" ]; then
+          # Нормализуем формат: multi-line или comma-separated → по строке на fp.
+          # tr -d '\r' — защита от CRLF при копировании секрета из Windows-источника.
+          EXPECTED=$(printf '%s\n' "$HOST_FINGERPRINTS" | tr ',' '\n' | tr -d '\r' | grep -v '^$')
+          VERIFIED_HOSTS=""
+          MITM_DETECTED=false
+          for HOST in $HOSTS; do
+            HOST_FPS=$(grep "^$HOST " "$KNOWN_HOSTS_FILE" | ssh-keygen -lf - 2>/dev/null | awk '{print $2}')
+            if [ -z "$HOST_FPS" ]; then
+              echo "WARN: $HOST не ответил на ssh-keyscan, исключаем из деплоя"
+              continue
+            fi
+            MATCH=false
+            while IFS= read -r FP; do
+              if echo "$EXPECTED" | grep -qFx "$FP"; then
+                MATCH=true
+                break
+              fi
+            done <<< "$HOST_FPS"
+            if $MATCH; then
+              VERIFIED_HOSTS="$VERIFIED_HOSTS $HOST"
+            else
+              echo "FAIL: ни один host key хоста $HOST не совпал с HOST_FINGERPRINTS"
+              echo "      Got: $HOST_FPS"
+              MITM_DETECTED=true
+            fi
+          done
+          # Несовпадение fingerprint'а = потенциальный MITM на этой ноде → fail
+          # всего run, даже если другие ноды OK; оператор должен разобраться.
+          # Нет ответа на ssh-keyscan = реальный down → просто исключаем ноду,
+          # остальные едут (сохраняет старую availability «один down → деплой
+          # через другой»).
+          if $MITM_DETECTED; then
+            echo "Aborting: возможный MITM на одной из нод; оператору проверить host keys"
+            exit 1
+          fi
+          [ -n "$VERIFIED_HOSTS" ] || { echo "FAIL: ни одна нода не прошла host key verification"; exit 1; }
+          echo "OK: верифицированные ноды:$VERIFIED_HOSTS"
+          HOSTS="$VERIFIED_HOSTS"
+        else
+          echo "WARN: HOST_FINGERPRINTS не задан — TOFU режим, MITM первого подключения не отслеживается."
+          echo "      Сверьте fingerprints выше с консолью провайдера; задайте GitHub Secret HOST_FINGERPRINTS (по одному fp на строку или через запятую)."
+        fi
+
+        SSH="ssh -i $KEY_FILE \
+          -o UserKnownHostsFile=$KNOWN_HOSTS_FILE \
+          -o StrictHostKeyChecking=yes \
+          -o BatchMode=yes \
+          -o ConnectTimeout=10 \
+          -o ServerAliveInterval=30 \
+          -o ServerAliveCountMax=10"
 
         REPO_URL="https://github.com/${{ github.repository }}.git"
 

@@ -169,7 +169,11 @@ build_binaries() {
   log "Сборка бинарников → $BIN_DIR ..."
   mkdir -p "$BIN_DIR"
   cd "$ROOT_DIR"
-  for svc in $(ls "$ROOT_DIR/cmd/"); do
+  # cmd/*/ с nullglob — раскрывается только в директории; файл в cmd/ (README,
+  # .gitkeep, .DS_Store) не попадает в список и не ломает go build.
+  shopt -s nullglob
+  for dir in cmd/*/; do
+    svc="${dir%/}"; svc="${svc#cmd/}"
     go build -o "$BIN_DIR/$svc" "./cmd/$svc"
     info "✓ $svc"
   done

@@ -13,11 +13,23 @@ export async function apiCall<T = unknown>(
   path: string,
   init?: RequestInit,
 ): Promise<ApiResult<T>> {
-  const res = await fetch(`${BASE}${path}`, {
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
-    ...init,
-  });
+  // 8s — больше суммы Gateway-таймаутов (NATS 5s + WS connect 2s + retry-окно).
+  // Без timeout «зависший backend» оставляет кнопку disabled на ≥30s, пользователь
+  // не понимает что произошло. signal в конце spread'а — перекрывает init.signal.
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+      ...init,
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'TimeoutError') {
+      return { ok: false, status: 0, error: 'request timeout' };
+    }
+    throw e;
+  }
   const requestId = res.headers.get('X-Request-Id') || undefined;
   const text = await res.text();
   let data: unknown = undefined;

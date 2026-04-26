@@ -69,6 +69,19 @@
 | Nomad + NATS | 100 MB | Системные демоны |
 | Apps (Total) | Остаток | Доступно для Go-бинарников |
 
+## Метрики и наблюдаемость
+
+Gateway экспонирует Prometheus-метрики через отдельный HTTP-эндпоинт на loopback (по умолчанию `127.0.0.1:8081/metrics`, переопределяется через `GATEWAY_METRICS_ADDR`). Bind на loopback осознанный: внешний доступ — через тот же SSH-tunnel, что и Nomad UI; multi-DC агрегация — через Prometheus federation.
+
+Ключевые метрики:
+- HTTP-запросы через Gateway: Counter + Histogram по `service`/`method`/`status`.
+- NATS Request-Reply: Histogram длительности + Counter попыток с outcome (`ok`/`no_responders`/`timeout`/`canceled`/`error`).
+- WebSocket: Gauge активных соединений.
+- Rate limiter: Counter отклонений по `kind=general|auth`.
+- Бесплатно от `prometheus/client_golang` — `go_*` (GC, goroutines, память) и `process_*` (CPU, FDs).
+
+Подробная конфигурация и точные имена метрик — `CLAUDE.md` → раздел Metrics.
+
 ## Локальная разработка
 
 Dev-окружение с Nomad запускается одной командой:
@@ -95,12 +108,14 @@ npm run dev      # http://localhost:5173
 
 ## Схема CI/CD (GitHub Actions)
 
-Деплой происходит без участия Docker Registry, напрямую на серверы.
+Деплой происходит без участия Docker Registry и без копирования бинарников на сервера — Nomad сам скачивает релиз с GitHub.
 
-1. Сборка: GitHub Actions собирает бинарники: `GOOS=linux GOARCH=amd64 go build`.
-2. Доставка: Через `scp-action` бинарники копируются на все сервера в `/usr/local/bin/`.
-3. Обновление: GitHub Actions через SSH выполняет `nomad job run` на одном из серверов.
-4. Rolling Update: Nomad по очереди перезапускает процессы на узлах, обеспечивая Zero Downtime.
+1. Сборка: CI (`ci.yml`) собирает бинарники под linux/amd64 и linux/arm64 с проверкой и тестами.
+2. Pre-release: на push в `main` создаётся GitHub pre-release `build-N` с архивами `<svc>_linux_<arch>.tar.gz` и публикуется артефакт `checksums.env` (SHA256 каждого архива).
+3. Деплой: параллельные `*-deploy.yml` workflow подключаются по SSH к одной из нод, проверяют живость Nomad (`/v1/status/leader`) и запускают `nomad job run`. Сама нода (а точнее Nomad на ней) скачивает архив через `artifact{}`-блок из GitHub Releases с проверкой checksum.
+4. Rolling Update: Nomad по очереди перезапускает аллокации на нодах, обеспечивая zero downtime.
+
+Подробнее: `deployments/envs/prod/prod.md`.
 
 ## Сетевые доступы (Firewall)
 
@@ -110,9 +125,9 @@ npm run dev      # http://localhost:5173
 |-|-|-|
 | 4222 | TCP | Доступ сервисов к NATS |
 | 6222 | TCP | Кластеризация NATS (между узлами) |
-| 4646 | TCP | Nomad HTTP API (для GitHub Actions) |
+| 4646 | TCP | Nomad HTTP API (только loopback; внешний доступ через SSH-tunnel) |
 | 4647-4648 | TCP/UDP |	Внутренний трафик Nomad (RPC/Serf) |
-| 80 | TCP | Внешний HTTP трафик (API Gateway) |
+| 8080 | TCP | Внешний HTTP трафик (API Gateway) |
 
 ## Рекомендации по эксплуатации
 
@@ -161,6 +176,8 @@ KV использовать только для кэша, сессий и вре
 │   ├── platform/
 │   │   ├── nc/
 │   │   │   └── client.go             # Общая обёртка над NATS + JetStream KV API
+│   │   ├── metrics/
+│   │   │   └── metrics.go            # Prometheus-метрики (gateway HTTP, NATS, WS, rate limiter)
 │   │   └── logger/
 │   │       └── logger.go             # zerolog-логгер: JSON в stderr, LOG_LEVEL из env
 │   ├── services/
@@ -189,8 +206,10 @@ KV использовать только для кэша, сессий и вре
 │   │   │   └── nats.conf             # NATS-кластер: DNS Discovery, JetStream, auth
 │   │   └── nomad/
 │   │       ├── nomad.hcl             # Nomad-агент: hybrid server+client, raw_exec
-│   │       ├── platform.nomad        # Джоб Gateway (платформа)
-│   │       └── xservices.nomad       # Джоб демо-сервисов (xauth, xhttp, xws)
+│   │       ├── gateway.nomad         # Джоб Gateway (платформа, type=system)
+│   │       ├── xauth.nomad           # [DEMO] Джоб xauth
+│   │       ├── xhttp.nomad           # [DEMO] Джоб xhttp
+│   │       └── xws.nomad             # [DEMO] Джоб xws
 │   └── envs/                         # Окружения и управление запуском
 │       ├── dev/
 │       │   ├── docker-compose.yml    # NATS-кластер + PostgreSQL для локальной разработки

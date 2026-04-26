@@ -153,6 +153,18 @@ install_nomad() {
   log "Установка Nomad (HashiCorp APT)..."
   wget -qO /usr/share/keyrings/hashicorp-archive-keyring.gpg \
     https://apt.releases.hashicorp.com/gpg
+  # Сверка fingerprint'а — защита от компрометации HashiCorp APT-mirror.
+  # Без неё backdoored nomad-binary встанет с root-привилегиями (raw_exec
+  # запускает tasks под user=nomad, но Nomad-агент сам root в systemd-юните).
+  # FP опубликован на https://www.hashicorp.com/security; ротация фиксируется здесь.
+  local expected_fp="798AEC654E5C15428C8E42EEAA16FCBCA621E701"
+  local actual_fp
+  actual_fp=$(gpg --show-keys --with-colons \
+    /usr/share/keyrings/hashicorp-archive-keyring.gpg \
+    | awk -F: '/^fpr:/ {print $10; exit}')
+  if [ "$actual_fp" != "$expected_fp" ]; then
+    die "HashiCorp GPG fingerprint mismatch: expected $expected_fp, got $actual_fp"
+  fi
   echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
 https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
     > /etc/apt/sources.list.d/hashicorp.list
@@ -409,8 +421,11 @@ setup_nats() {
   # Конфиг (одинаковый для всех нод).
   # $PLATFORM_DOMAIN и остальные переменные раскрываются NATS'ом из env при старте.
   cat > "$NATS_CONF_DIR/nats.conf" << 'CONF'
-port:      4222
-http_port: 8222
+port: 4222
+
+# Мониторинг — loopback-only (внешний доступ через SSH-tunnel).
+# Defense-in-depth: bind на 127.0.0.1 — первичный слой; UFW — вторичный.
+http: "127.0.0.1:8222"
 
 server_name: $HOSTNAME
 
@@ -511,10 +526,13 @@ setup_firewall() {
   ufw allow 22/tcp   comment 'SSH'
   ufw allow 8080/tcp comment 'Gateway HTTP'
 
-  # Межнодовые порты (ограничьте диапазоном IP нод в production)
+  # Межнодовые порты (ограничьте диапазоном IP нод в production).
+  # Nomad HTTP API (4646) слушает только на 127.0.0.1 (см. nomad.hcl/addresses) —
+  # отдельное UFW-правило не требуется и было бы dead-code (kernel отвергнет
+  # внешний пакет независимо от UFW). Между нодами Nomad общается через
+  # 4647/4648 (RPC/Serf), не 4646.
   ufw allow 4222/tcp comment 'NATS client'
   ufw allow 6222/tcp comment 'NATS cluster'
-  ufw allow 4646/tcp comment 'Nomad HTTP API'
   ufw allow 4647/tcp comment 'Nomad RPC'
   ufw allow 4647/udp comment 'Nomad RPC UDP'
   ufw allow 4648/tcp comment 'Nomad Serf'
@@ -536,8 +554,8 @@ start_services() {
   # /healthz отдаёт 200 только после того, как stream/KV-store восстановлены и
   # сервер готов принимать запросы. Таймаут 60s рассчитан на тяжёлый recovery
   # (большой /var/lib/nats/jetstream).
-  # Порт 8222 = http_port в deployments/infra/nats/nats.conf. При смене там —
-  # синхронизировать здесь (та же convention, что для 4222/6222/8080).
+  # Адрес 127.0.0.1:8222 = `http:` в deployments/infra/nats/nats.conf. При
+  # смене там — синхронизировать здесь (та же convention, что для 4222/6222/8080).
   log "Ожидание готовности NATS (JetStream recovery)..."
   local elapsed=0
   until curl -sf --max-time 2 "http://127.0.0.1:8222/healthz" &>/dev/null; do
@@ -592,7 +610,7 @@ print_summary() {
   printf '═══════════════════════════════════════════\n'
   printf '  Нода готова: %s\n' "$NODE_IP"
   printf '═══════════════════════════════════════════\n'
-  info "NATS мониторинг: http://${NODE_IP}:8222"
+  info "NATS мониторинг: ssh -L 8222:127.0.0.1:8222 user@${NODE_IP} → http://localhost:8222"
   info "Nomad UI:        ssh -L 4646:127.0.0.1:4646 user@${NODE_IP} → http://localhost:4646"
   printf '\n'
   warn "A-запись ${PLATFORM_DOMAIN} → ${NODE_IP} должна быть добавлена в DNS"

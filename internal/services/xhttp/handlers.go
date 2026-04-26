@@ -195,6 +195,10 @@ func (h *Handlers) HandleUpdate(msg *nats.Msg) {
 		utils.ReplyError(h.log, msg, 400, "invalid json")
 		return
 	}
+	if req.Name == "" {
+		utils.ReplyError(h.log, msg, 400, "name required")
+		return
+	}
 
 	var it Item
 	err := h.db.QueryRowContext(ctx, `

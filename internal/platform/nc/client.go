@@ -278,6 +278,10 @@ func (p *PlatformClient) initKV(cfg KVConfig) error {
 	if replicas < 1 {
 		replicas = 1
 	}
+	requested := cfg.Replicas
+	if requested < 1 {
+		requested = 1
+	}
 	for {
 		_, err := p.JS.CreateKeyValue(ctx, jetstream.KeyValueConfig{
 			Bucket:       cfg.BucketName,
@@ -288,7 +292,17 @@ func (p *PlatformClient) initKV(cfg KVConfig) error {
 			Storage:      jetstream.FileStorage, // store_dir: "/var/lib/nats/jetstream" в nats.conf
 		})
 		if err == nil {
-			p.log.Info().Str("bucket", cfg.BucketName).Int("replicas", replicas).Uint8("history", cfg.History).Msg("NATS KV: бакет создан")
+			// Эскалируем лог при существенной деградации R: один шаг вниз —
+			// типичный first-start race (meta-cluster не успел подтянуть всех
+			// пиров), приемлем как Info+Warn-цепочка из downgrade-лога. Два
+			// шага и больше — реальный misconfig: ожидали R=N, получили R≤N-2.
+			// Без метрик (G5) Error в логах — единственный сигнал оператору
+			// до того, как KV молча работает с пониженной отказоустойчивостью.
+			event := p.log.Info()
+			if requested-replicas >= 2 {
+				event = p.log.Error().Int("requested", requested)
+			}
+			event.Str("bucket", cfg.BucketName).Int("replicas", replicas).Uint8("history", cfg.History).Msg("NATS KV: бакет создан")
 			return nil
 		}
 

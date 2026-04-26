@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"platform/internal/platform/metrics"
+
 	"github.com/rs/zerolog"
 	"golang.org/x/time/rate"
 )
@@ -178,6 +180,7 @@ func (gw *Gateway) middlewareRateLimit(next http.Handler) http.Handler {
 		if p := gw.cfg.RateLimit.AuthPathPrefix; p != "" && strings.HasPrefix(r.URL.Path, p) {
 			if !gw.rl.allowAuth(ip) {
 				gw.log.Warn().Str("ip", ip).Str("path", r.URL.Path).Msg("auth rate limit exceeded")
+				metrics.RateLimitRejectedTotal.WithLabelValues("auth").Inc()
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Retry-After", "1")
 				http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
@@ -187,6 +190,7 @@ func (gw *Gateway) middlewareRateLimit(next http.Handler) http.Handler {
 
 		if !gw.rl.allow(ip) {
 			gw.log.Warn().Str("ip", ip).Str("path", r.URL.Path).Msg("rate limit exceeded")
+			metrics.RateLimitRejectedTotal.WithLabelValues("general").Inc()
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
@@ -205,7 +209,11 @@ func (gw *Gateway) wsConnGuard() (ok bool, release func()) {
 		gw.rl.wsConns.Add(-1)
 		return false, nil
 	}
-	return true, func() { gw.rl.wsConns.Add(-1) }
+	metrics.WSConnectionsActive.Inc()
+	return true, func() {
+		gw.rl.wsConns.Add(-1)
+		metrics.WSConnectionsActive.Dec()
+	}
 }
 
 // realIP извлекает реальный IP клиента.

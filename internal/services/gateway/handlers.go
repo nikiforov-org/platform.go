@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"platform/internal/platform/metrics"
 	"platform/internal/platform/nc"
 	"platform/utils"
 
@@ -118,6 +120,14 @@ func (gw *Gateway) Handler() http.Handler {
 //	200 {"status":"ok",  "nats":"connected"}    — Gateway готов
 //	503 {"status":"error","nats":"disconnected"} — NATS недоступен
 func (gw *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Healthcheck'и по конвенции — GET/HEAD; LB и мониторы не ждут реакции на
+	// POST/PUT/DELETE и могут принять 200 на мутирующий метод как сигнал
+	// «эндпоинт принимает запись», что в данном случае ложь.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 
 	// Ошибки w.Write игнорируем намеренно: WriteHeader уже улетел, второй ответ
@@ -189,7 +199,18 @@ func (gw *Gateway) route(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		gw.handleWS(w, r, service)
+		// contextcheck: WS-сессия живёт от gw.ctx (server lifecycle), а не от
+		// r.Context() — последний отменяется по выходу из HTTP-handler'а, а WS
+		// должен оставаться открытым до shutdown или явного close.
+		gw.handleWS(gw.ctx, w, r, service) //nolint:contextcheck
+		return
+	}
+
+	// /v1/{service} без method-сегмента → subject = "api.v1.service." (trailing
+	// dot). NATS вернёт ErrNoResponders, в логах оператор видит confusing subject.
+	// Отбиваем 400 — клиенту понятнее «нужен method», чем 503.
+	if len(parts) < 3 {
+		http.Error(w, "method required", http.StatusBadRequest)
 		return
 	}
 
@@ -219,6 +240,31 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 	ip := realIP(r, gw.cfg.RateLimit.TrustedProxy)
 	start := time.Now()
 
+	// Метрики инкрементируются один раз за запрос — после установки финального
+	// статуса. Если status остался 0, значит handler не дошёл до отправки ответа
+	// (panic, разрыв соединения до записи) — такие случаи в общую статистику
+	// не попадают, чтобы не размывать error rate.
+	//
+	// metricUnknown=true сворачивает метки в фиксированные "unknown" — закрывает
+	// cardinality bomb через `/v1/{rand}/{rand}` (regex `validSubjectToken` пропускает
+	// любую пару tokens, не только реальные backend'ы). Выставляется при
+	// ErrNoResponders после исчерпания retry: subject либо не существует, либо
+	// у него нет живых подписчиков на всём окне таймаута. Короткие окна деплоя
+	// поглощает retry, до метрики ErrNoResponders доходит только реально мёртвый.
+	metricStatus := 0
+	metricUnknown := false
+	defer func() {
+		if metricStatus == 0 {
+			return
+		}
+		s, m := service, method
+		if metricUnknown {
+			s, m = "unknown", "unknown"
+		}
+		metrics.HTTPRequestsTotal.WithLabelValues(s, m, strconv.Itoa(metricStatus)).Inc()
+		metrics.HTTPRequestDuration.WithLabelValues(s, m).Observe(time.Since(start).Seconds())
+	}()
+
 	gw.log.Info().
 		Str("req", reqID).
 		Str("method", r.Method).
@@ -233,6 +279,7 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 	if err != nil {
 		gw.log.Error().Err(err).Str("req", reqID).Str("subject", subject).Msg("ошибка чтения тела запроса")
 		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		metricStatus = http.StatusBadRequest
 		return
 	}
 
@@ -244,8 +291,11 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 	if auth := r.Header.Get("Authorization"); auth != "" {
 		msg.Header.Set("Authorization", auth)
 	}
-	if cookie := r.Header.Get("Cookie"); cookie != "" {
-		msg.Header.Set("Cookie", cookie)
+	// HTTP/1.1 от прокси/middlebox может прийти с несколькими заголовками Cookie
+	// (RFC 6265 §5.4 не запрещает). r.Header.Get отдаст только первый — backend
+	// потеряет часть кук. Values + Join по "; " собирает всё в одну строку.
+	if cookies := strings.Join(r.Header.Values("Cookie"), "; "); cookies != "" {
+		msg.Header.Set("Cookie", cookies)
 	}
 
 	// Контекст NATS-запроса: клиентская отмена (r.Context) + shutdown (BaseContext=gw.ctx)
@@ -258,24 +308,34 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 	// клиентская отмена, disconnect) считаются финальными — повторять их бессмысленно.
 	var resp *nats.Msg
 	attempts := 0
+	natsStart := time.Now()
+retry:
 	for {
 		attempts++
 		resp, err = gw.nats.Conn.RequestMsgWithContext(ctx, msg)
 		if !errors.Is(err, nats.ErrNoResponders) {
-			break
+			break retry
 		}
 		select {
 		case <-ctx.Done():
-			break
+			break retry
 		case <-time.After(gw.cfg.HTTP.NATSRetryDelay):
-			continue
 		}
-		break
 	}
+	if errors.Is(err, nats.ErrNoResponders) {
+		metricUnknown = true
+	}
+	metricService := service
+	if metricUnknown {
+		metricService = "unknown"
+	}
+	metrics.NATSRequestDuration.WithLabelValues(metricService).Observe(time.Since(natsStart).Seconds())
+	metrics.NATSRequestAttemptsTotal.WithLabelValues(metricService, natsRequestOutcome(r.Context(), err)).Add(float64(attempts))
 	if err != nil {
 		status, reason := natsRequestErrStatus(r.Context(), err)
 		gw.log.Error().Err(err).Str("req", reqID).Str("subject", subject).Int("attempts", attempts).Int("status", status).Str("reason", reason).Msg("NATS request error")
 		http.Error(w, reason, status)
+		metricStatus = status
 		return
 	}
 
@@ -303,8 +363,12 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 	// Возвращаем request ID клиенту — полезно для поддержки и отладки.
 	w.Header().Set("X-Request-Id", reqID)
 	w.WriteHeader(statusCode)
+	metricStatus = statusCode
 
-	if _, err := w.Write(resp.Data); err != nil {
+	// gosec G705 ложное срабатывание: resp.Data приходит из доверенного backend-сервиса
+	// через NATS, не от пользователя — Content-Type/charset выставляет backend, gateway
+	// только проксирует.
+	if _, err := w.Write(resp.Data); err != nil { //nolint:gosec
 		gw.log.Error().Err(err).Str("req", reqID).Str("subject", subject).Msg("ошибка записи ответа")
 		return
 	}
@@ -347,6 +411,26 @@ func natsRequestErrStatus(clientCtx context.Context, err error) (int, string) {
 	return http.StatusServiceUnavailable, "service unavailable"
 }
 
+// natsRequestOutcome классифицирует исход NATS-запроса для метрики attempts.
+// Отличается от natsRequestErrStatus тем, что nil-ошибку считает успехом
+// (для HTTP-статуса успех уже выражен в 200) и различает no_responders от
+// прочих сетевых ошибок.
+func natsRequestOutcome(clientCtx context.Context, err error) string {
+	if err == nil {
+		return "ok"
+	}
+	if errors.Is(err, nats.ErrNoResponders) {
+		return "no_responders"
+	}
+	if clientCtx.Err() == context.Canceled {
+		return "canceled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	return "error"
+}
+
 // newRequestID генерирует уникальный идентификатор запроса (8 байт = 16 hex-символов).
 // Используется для сквозной трассировки: Gateway → NATS-заголовок → лог сервиса.
 func newRequestID() string {
@@ -378,7 +462,7 @@ func parseStatus(s string) int {
 //   - Браузер → Gateway:     фреймы читаются и публикуются в {base}.in.{sid}
 //   - Микросервис → Браузер: сообщения из {base}.out.{sid} пишутся в WS
 //   - Закрытие сессии:       микросервис шлёт Header "Control: CLOSE"
-func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service string) {
+func (gw *Gateway) handleWS(parentCtx context.Context, w http.ResponseWriter, r *http.Request, service string) {
 	// Проверяем глобальный лимит WS-соединений до апгрейда.
 	ok, releaseConn := gw.wsConnGuard()
 	if !ok {
@@ -410,8 +494,10 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 
 	conn.SetReadLimit(wsReadLimit)
 
-	// Наследуемся от gw.ctx: при shutdown сервера все WS-сессии отменяются.
-	ctx, cancel := context.WithCancel(gw.ctx)
+	// Наследуемся от parentCtx (= gw.ctx): при shutdown сервера все WS-сессии отменяются.
+	// r.Context() осознанно не используется — он отменяется по окончании HTTP-handler'а,
+	// тогда как WS-сессия должна жить до shutdown или явного close.
+	ctx, cancel := context.WithCancel(parentCtx)
 
 	// mu защищает ВСЕ обращения к conn (Write, Close, SetReadDeadline) от гонок между:
 	//   - горутиной Ping,
@@ -488,8 +574,8 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 	// может прочитать access_token для аутентификации соединения.
 	connectMsg := nats.NewMsg(baseSubject + ".connect")
 	connectMsg.Header.Set("Sid", sessionID)
-	if cookie := r.Header.Get("Cookie"); cookie != "" {
-		connectMsg.Header.Set("Cookie", cookie)
+	if cookies := strings.Join(r.Header.Values("Cookie"), "; "); cookies != "" {
+		connectMsg.Header.Set("Cookie", cookies)
 	}
 	connectCtx, connectCancel := context.WithTimeout(ctx, gw.cfg.HTTP.WSConnectTimeout)
 	_, err = gw.nats.Conn.RequestMsgWithContext(connectCtx, connectMsg)
@@ -587,7 +673,7 @@ func (gw *Gateway) handleWS(w http.ResponseWriter, r *http.Request, service stri
 			case isTimeoutError(err):
 				// Клиент не прислал данные или Pong за wsReadDeadline — считаем мёртвым.
 				gw.log.Info().Str("sid", sessionID).Msg("WS session timed out")
-				safeWrite(websocket.CloseMessage,
+				_ = safeWrite(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "inactivity timeout"))
 			default:
 				gw.log.Error().Err(err).Str("sid", sessionID).Msg("WS read error")

@@ -4,6 +4,7 @@
 #
 # GitHub Secrets:
 #   DEPLOY_SSH_KEY, DEPLOY_USER, PLATFORM_DOMAIN, NOMAD_TOKEN  — общие
+#   HOST_FINGERPRINTS  — SHA256 host keys прод-нод (см. action.yml)
 #   NATS_USER, NATS_PASSWORD
 #   DATABASE_URL   — PostgreSQL DSN (postgres://user:pass@host:5432/db?sslmode=require)
 #   ACCESS_SECRET  — HMAC-ключ валидации JWT; должен совпадать с AUTH_ACCESS_SECRET в xauth
@@ -29,6 +30,7 @@ jobs:
       DEPLOY_USER:     ${{ secrets.DEPLOY_USER }}
       PLATFORM_DOMAIN: ${{ secrets.PLATFORM_DOMAIN }}
       NOMAD_TOKEN:     ${{ secrets.NOMAD_TOKEN }}
+      HOST_FINGERPRINTS: ${{ secrets.HOST_FINGERPRINTS }}
       NATS_USER:       ${{ secrets.NATS_USER }}
       NATS_PASSWORD:   ${{ secrets.NATS_PASSWORD }}
       DATABASE_URL:    ${{ secrets.DATABASE_URL }}

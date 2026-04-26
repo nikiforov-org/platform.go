@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"platform/internal/platform/logger"
+	"platform/internal/platform/metrics"
 	"platform/internal/platform/nc"
 	"platform/internal/services/gateway"
 	"platform/utils"
@@ -45,7 +46,16 @@ func main() {
 	// 4. Gateway.
 	gw := gateway.New(natsClient, cfg, log, stopCh)
 
-	// 5. HTTP-сервер.
+	// 5. Prometheus /metrics endpoint на отдельном порту (loopback only).
+	// Сбой metrics-сервера не должен валить gateway — log-only.
+	metricsAddr := utils.GetEnv(log, "GATEWAY_METRICS_ADDR", "127.0.0.1:8081")
+	go func() {
+		if err := metrics.Serve(metricsAddr, log); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("metrics endpoint failed")
+		}
+	}()
+
+	// 6. HTTP-сервер.
 	// BaseContext — чтобы r.Context() каждого входящего запроса отменялся при
 	// graceful shutdown. Это позволяет NATS-вызовам (RequestMsgWithContext)
 	// и WS-обработчикам мгновенно реагировать на shutdown, а не ждать таймаута.
@@ -59,7 +69,7 @@ func main() {
 		BaseContext:       func(net.Listener) context.Context { return gw.RootContext() },
 	}
 
-	// 6. Graceful Shutdown.
+	// 7. Graceful Shutdown.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 

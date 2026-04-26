@@ -1,0 +1,35 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - gosec
+    - rowserrcheck
+
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*github.com/gorilla/websocket.Conn).SetReadDeadline
+        - (*github.com/gorilla/websocket.Conn).SetWriteDeadline
+        - (*github.com/nats-io/nats.go.Subscription).Unsubscribe
+
+    gosec:
+      # G104 (errors unhandled) дублирует errcheck — exclude-functions выше задают
+      # whitelist, gosec про него не знает; чтобы не вести два списка, отключаем G104.
+      excludes:
+        - G104
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G404|G101"
