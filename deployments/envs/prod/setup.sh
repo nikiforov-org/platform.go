@@ -157,20 +157,40 @@ install_base() {
 install_nomad() {
   if command -v nomad &>/dev/null; then
     info "Nomad уже установлен: $(nomad version | head -1)"
-    # setup.sh не апгрейдит Nomad автоматически: в скрипте нет pinned
-    # NOMAD_VERSION (Nomad ставится из HashiCorp APT = latest на момент
-    # первой установки). Upgrade — отдельная ops-процедура на каждой ноде:
-    #   apt-get update && apt-get install --only-upgrade -y --no-install-recommends nomad
-    #   systemctl restart nomad
-    # Rolling по нодам даёт zero-downtime для Jobs (Raft переизбирает лидера,
-    # client-allocations сохраняются).
     return
   fi
-  log "Установка Nomad (HashiCorp APT)..."
-  wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(grep -oP '(?<=UBUNTU_CODENAME=).*' /etc/os-release || lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-  sudo apt update && sudo apt install nomad -y -q --no-install-recommends
-  info "Установлен: $(nomad version | head -1)"
+
+  log "Определяем последнюю версию Nomad..."
+  
+  # Достаем тег последней версии через GitHub API
+  local latest_version
+  latest_version=$(curl -s https://api.github.com/repos/hashicorp/nomad/releases/latest | grep -Po '"tag_name": "v\K[^"]*')
+
+  if [ -z "$latest_version" ]; then
+    warn "Не удалось определить latest версию через API, ставим проверенную 1.7.6"
+    latest_version="1.7.6"
+  fi
+
+  log "Установка Nomad v${latest_version} (через GitHub в обход блокировки)..."
+
+  local arch=$(dpkg --print-architecture)
+  [[ "$arch" == "amd64" ]] && arch="amd64"
+  [[ "$arch" == "arm64" ]] && arch="arm64"
+
+  local url="https://github.com/hashicorp/nomad/releases/download/v${latest_version}/nomad_${latest_version}_linux_${arch}.zip"
+
+  # Скачивание
+  if ! wget -qO /tmp/nomad.zip "$url"; then
+    die "Не удалось скачать Nomad с GitHub. Ссылка: $url"
+  fi
+
+  # Распаковка
+  unzip -o /tmp/nomad.zip -d /tmp/
+  sudo mv /tmp/nomad /usr/local/bin/
+  sudo chmod +x /usr/local/bin/nomad
+  rm -f /tmp/nomad.zip
+
+  info "Nomad v${latest_version} успешно установлен в /usr/local/bin"
 }
 
 setup_nomad() {
