@@ -1,35 +1,44 @@
-version: "2"
+run:
+  timeout: 5m
 
 linters:
-  default: standard
+  # Поле 'default' больше не существует. 
+  # Включаем нужные линтеры явно.
   enable:
     - bodyclose
     - contextcheck
     - gosec
     - rowserrcheck
+    - errcheck
+    - gosimple
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - typecheck
 
-  settings:
-    errcheck:
-      exclude-functions:
-        - (io.Closer).Close
-        - (*database/sql.DB).Close
-        - (*database/sql.Rows).Close
-        - (*github.com/gorilla/websocket.Conn).SetReadDeadline
-        - (*github.com/gorilla/websocket.Conn).SetWriteDeadline
-        - (*github.com/nats-io/nats.go.Subscription).Unsubscribe
+# Настройки линтеров теперь живут здесь
+linters-settings:
+  errcheck:
+    exclude-functions:
+      - (io.Closer).Close
+      - (*database/sql.DB).Close
+      - (*database/sql.Rows).Close
+      - (*github.com/gorilla/websocket.Conn).SetReadDeadline
+      - (*github.com/gorilla/websocket.Conn).SetWriteDeadline
+      - (*github.com/nats-io/nats.go.Subscription).Unsubscribe
 
-    gosec:
-      # G104 (errors unhandled) дублирует errcheck — exclude-functions выше задают
-      # whitelist, gosec про него не знает; чтобы не вести два списка, отключаем G104.
-      excludes:
-        - G104
+  gosec:
+    excludes:
+      - G104
 
-  exclusions:
-    rules:
-      - path: _test\.go
-        linters:
-          - errcheck
-      - path: _test\.go
-        linters:
-          - gosec
-        text: "G404|G101"
+# Правила исключений (бывший exclusions) теперь живут в блоке issues
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+    - path: _test\.go
+      linters:
+        - gosec
+      text: "G404|G101"
