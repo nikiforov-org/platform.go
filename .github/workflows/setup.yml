@@ -128,10 +128,9 @@ jobs:
           NODE_IP: ${{ inputs.node_ip }}
         run: |
           SSH="ssh -i ~/.ssh/setup_key -o StrictHostKeyChecking=yes -o BatchMode=yes"
-          $SSH "${DEPLOY_USER}@${NODE_IP}" '
-            sudo bash -c "set -a; . /tmp/setup_env; set +a; bash /tmp/setup.sh"
-            rm -f /tmp/setup_env /tmp/setup.sh
-          '
+          $SSH "${DEPLOY_USER}@${NODE_IP}" "sudo bash -c 'set -a; . /tmp/setup_env; set +a; bash /tmp/setup.sh'"
+          # Удаление файлов тоже под sudo, на случай если env-файл стал принадлежать руту
+          $SSH "${DEPLOY_USER}@${NODE_IP}" "sudo rm -f /tmp/setup_env /tmp/setup.sh"
 
       - name: Cleanup
         if: always()

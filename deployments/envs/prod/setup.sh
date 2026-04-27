@@ -141,19 +141,13 @@ setup_swap() {
 # Базовые пакеты
 # =============================================================================
 install_base() {
-  log "Очистка и обновление кэша пакетов..."
-  
-  # Универсальное удаление проблемного backports из всех списков
-  # Это сработает и на Debian, и на Ubuntu, независимо от зеркала
-  sudo sed -i '/backports/d' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
-  
-  # Обновляемся. --allow-releaseinfo-change нужен, если дистрибутив сменил статус.
-  # || true гарантирует, что скрипт не упадет, если какое-то зеркало просто "тупит".
-  sudo apt-get update -y -q --allow-releaseinfo-change || warn "Некоторые зеркала недоступны, продолжаем..."
-
   log "Установка базовых пакетов..."
-  # Теперь установка curl и прочего пройдет успешно, так как apt больше не блокирует процесс
-  sudo apt-get install -y -q --no-install-recommends \
+  apt-get update -q
+  # --no-install-recommends: ставим только Depends:, без Recommends:.
+  # Меньше пакетов на диске, меньше демонов (rsyslog/policykit и т.п.),
+  # меньше attack surface. Все перечисленные утилиты сохраняют функциональность
+  # без recommends (curl, dig, lsb_release, ufw, gpg работают на Depends).
+  apt-get install -y -q --no-install-recommends \
     curl wget git unzip gnupg lsb-release ufw dnsutils
 }
 
