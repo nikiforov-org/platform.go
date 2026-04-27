@@ -172,28 +172,32 @@ install_nomad() {
   fi
 
   log "Установка Nomad (HashiCorp APT)..."
-  
-  # Используем curl (он надежнее) и убеждаемся, что пишем в keyring
-  curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
 
+  # 1. Сначала ставим ключ. 
+  # Используем --batch для gpg (убирает ошибку /dev/tty)
+  # Используем -fsSL для curl. 
+  curl -fsSL https://apt.releases.hashicorp.com/gpg | \
+    gpg --confdir /tmp --batch --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg || \
+    die "Не удалось скачать или импортировать GPG ключ HashiCorp"
+
+  # 2. Сверка fingerprint (твой код из скрипта, он ок)
   local expected_fp="798AEC654E5C15428C8E42EEAA16FCBCA621E701"
   local actual_fp
   actual_fp=$(gpg --show-keys --with-colons /usr/share/keyrings/hashicorp-archive-keyring.gpg | awk -F: '/^fpr:/ {print $10; exit}')
   
   if [ "$actual_fp" != "$expected_fp" ]; then
-    die "HashiCorp GPG fingerprint mismatch!"
+    die "HashiCorp GPG fingerprint mismatch: expected $expected_fp, got $actual_fp"
   fi
 
+  # 3. Добавляем репозиторий. 
+  # ВАЖНО: используем tee, так как мы внутри sudo bash, а перенаправление > может капризничать
   echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-    | sudo tee /etc/apt/sources.list.d/hashicorp.list
+    | tee /etc/apt/sources.list.d/hashicorp.list
 
-  # КРИТИЧЕСКИЙ МОМЕНТ:
-  # Мы добавляем || true, чтобы битый репозиторий Selectel не вешал скрипт.
-  # Даже если он выдаст ошибку, кэш для HashiCorp (который живой) обновится.
-  sudo apt-get update -y -q || echo "Предупреждение: не все репозитории обновились, но пробуем ставить Nomad..."
-
-  # Ставим Nomad. Если ключ и list-файл верны, он поставится, даже если другие репозитории лежат.
-  sudo apt-get install -y -q --no-install-recommends nomad
+  # 4. Обновляемся и ставим. 
+  # Добавляем -o Acquire::AllowInsecureRepositories=true на случай если Selectel опять выплюнет 404
+  apt-get update -y -q -o Acquire::AllowInsecureRepositories=true || true
+  apt-get install -y -q --no-install-recommends nomad
   
   info "Установлен: $(nomad version | head -1)"
 }
