@@ -171,23 +171,29 @@ install_nomad() {
     return
   fi
 
-  log "Установка Nomad (как в официальной доке)..."
+  log "Установка Nomad (HashiCorp APT)..."
 
-  # 1. Качаем ключ и деарморим его. 
-  # Добавлен флаг --batch, чтобы gpg не искал терминал (которого нет в GitHub Actions)
-  wget -O- https://apt.releases.hashicorp.com/gpg | \
-    gpg --batch --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+  # 1. Удаляем старые следы, чтобы не было ошибки "File exists"
+  rm -f /usr/share/keyrings/hashicorp-archive-keyring.gpg
+  
+  # 2. Скачиваем ключ во временный файл, чтобы убедиться, что он скачался
+  # Если 404 — скрипт упадет здесь (из-за set -e), и мы увидим причину
+  wget -q -O /tmp/hashicorp.gpg https://apt.releases.hashicorp.com/gpg || \
+    die "Не удалось скачать ключ с apt.releases.hashicorp.com/gpg"
 
-  # 2. Добавляем репозиторий. 
-  # Используем их официальный способ определения кодового имени через /etc/os-release
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(grep -oP '(?<=UBUNTU_CODENAME=).*' /etc/os-release || lsb_release -cs) main" \
+  # 3. Деарморим ключ
+  cat /tmp/hashicorp.gpg | gpg --batch --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+  rm -f /tmp/hashicorp.gpg
+
+  # 4. Добавляем репозиторий (официальная строка)
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
     | tee /etc/apt/sources.list.d/hashicorp.list
 
-  # 3. Обновляем и ставим
-  # ВАЖНО: оставляем "|| true" только здесь, чтобы битый Selectel не прервал процесс
+  # 5. Обновляемся и ставим
+  # Используем || true только для апдейта, чтобы игнорировать мусор в других репозиториях
   apt-get update -y || true
   apt-get install -y nomad
-
+  
   info "Установлен: $(nomad version | head -1)"
 }
 
