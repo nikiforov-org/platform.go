@@ -146,13 +146,19 @@ setup_swap() {
 # Базовые пакеты
 # =============================================================================
 install_base() {
+  log "Очистка и обновление кэша пакетов..."
+  
+  # Универсальное удаление проблемного backports из всех списков
+  # Это сработает и на Debian, и на Ubuntu, независимо от зеркала
+  sudo sed -i '/backports/d' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+  
+  # Обновляемся. --allow-releaseinfo-change нужен, если дистрибутив сменил статус.
+  # || true гарантирует, что скрипт не упадет, если какое-то зеркало просто "тупит".
+  sudo apt-get update -y -q --allow-releaseinfo-change || warn "Некоторые зеркала недоступны, продолжаем..."
+
   log "Установка базовых пакетов..."
-  apt-get update -q
-  # --no-install-recommends: ставим только Depends:, без Recommends:.
-  # Меньше пакетов на диске, меньше демонов (rsyslog/policykit и т.п.),
-  # меньше attack surface. Все перечисленные утилиты сохраняют функциональность
-  # без recommends (curl, dig, lsb_release, ufw, gpg работают на Depends).
-  apt-get install -y -q --no-install-recommends \
+  # Теперь установка curl и прочего пройдет успешно, так как apt больше не блокирует процесс
+  sudo apt-get install -y -q --no-install-recommends \
     curl wget git unzip gnupg lsb-release ufw dnsutils
 }
 
@@ -162,35 +168,33 @@ install_base() {
 install_nomad() {
   if command -v nomad &>/dev/null; then
     info "Nomad уже установлен: $(nomad version | head -1)"
-    # setup.sh не апгрейдит Nomad автоматически: в скрипте нет pinned
-    # NOMAD_VERSION (Nomad ставится из HashiCorp APT = latest на момент
-    # первой установки). Upgrade — отдельная ops-процедура на каждой ноде:
-    #   apt-get update && apt-get install --only-upgrade -y --no-install-recommends nomad
-    #   systemctl restart nomad
-    # Rolling по нодам даёт zero-downtime для Jobs (Raft переизбирает лидера,
-    # client-allocations сохраняются).
     return
   fi
+
   log "Установка Nomad (HashiCorp APT)..."
-  wget -qO /usr/share/keyrings/hashicorp-archive-keyring.gpg \
-    https://apt.releases.hashicorp.com/gpg
-  # Сверка fingerprint'а — защита от компрометации HashiCorp APT-mirror.
-  # Без неё backdoored nomad-binary встанет с root-привилегиями (raw_exec
-  # запускает tasks под user=nomad, но Nomad-агент сам root в systemd-юните).
-  # FP опубликован на https://www.hashicorp.com/security; ротация фиксируется здесь.
+  
+  # Используем curl (он надежнее) и убеждаемся, что пишем в keyring
+  curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
   local expected_fp="798AEC654E5C15428C8E42EEAA16FCBCA621E701"
   local actual_fp
-  actual_fp=$(gpg --show-keys --with-colons \
-    /usr/share/keyrings/hashicorp-archive-keyring.gpg \
-    | awk -F: '/^fpr:/ {print $10; exit}')
+  actual_fp=$(gpg --show-keys --with-colons /usr/share/keyrings/hashicorp-archive-keyring.gpg | awk -F: '/^fpr:/ {print $10; exit}')
+  
   if [ "$actual_fp" != "$expected_fp" ]; then
-    die "HashiCorp GPG fingerprint mismatch: expected $expected_fp, got $actual_fp"
+    die "HashiCorp GPG fingerprint mismatch!"
   fi
-  echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
-https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-    > /etc/apt/sources.list.d/hashicorp.list
-  apt-get update -q
-  apt-get install -y -q --no-install-recommends nomad
+
+  echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+    | sudo tee /etc/apt/sources.list.d/hashicorp.list
+
+  # КРИТИЧЕСКИЙ МОМЕНТ:
+  # Мы добавляем || true, чтобы битый репозиторий Selectel не вешал скрипт.
+  # Даже если он выдаст ошибку, кэш для HashiCorp (который живой) обновится.
+  sudo apt-get update -y -q || echo "Предупреждение: не все репозитории обновились, но пробуем ставить Nomad..."
+
+  # Ставим Nomad. Если ключ и list-файл верны, он поставится, даже если другие репозитории лежат.
+  sudo apt-get install -y -q --no-install-recommends nomad
+  
   info "Установлен: $(nomad version | head -1)"
 }
 
