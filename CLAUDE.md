@@ -182,6 +182,8 @@ Key Nomad behaviors:
 
 NATS cluster (production) uses DNS-based route discovery via `deployments/infra/nats/nats.conf`. Services connect to local NATS on `127.0.0.1:4222`.
 
+**Any binary as a service:** Nomad's `raw_exec` driver runs any static Linux binary — Go, Rust, or any language with static linking. The binary connects to local NATS on `127.0.0.1:4222`, subscribes to subjects, and becomes a full platform participant. It does not have to be built by this repo's CI — any URL with a checksum in the `artifact {}` block works. Docker is not required and not installed.
+
 **Single cluster, multi-DC:** the platform runs as one Nomad+NATS cluster; nodes can span multiple datacenters. `raft_multiplier=5` accommodates WAN latency. Inter-node traffic is encrypted end-to-end: NATS cluster (6222) via mTLS (`NATS_CA_KEY`/`NATS_CA_CERT`), Nomad RPC (4647) via TLS (`NOMAD_CA_KEY`/`NOMAD_CA_CERT`), Nomad Serf gossip (4648) via symmetric key (`NOMAD_GOSSIP_KEY`).
 
 **Multiple isolated clusters** (separate products/tenants): each cluster needs its own `PLATFORM_DOMAIN` (Nomad `retry_join` boundary), its own `NATS_CA_KEY`/`NATS_CA_CERT` (NATS mTLS isolation), and its own `NOMAD_CA_KEY`/`NOMAD_CA_CERT`/`NOMAD_GOSSIP_KEY` (Nomad TLS+Serf isolation). Nodes with different CA certs cannot establish cross-cluster connections — CA-pair separation is the security boundary. The same `setup.sh` is used for every cluster, only the variable values differ.

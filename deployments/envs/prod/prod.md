@@ -187,16 +187,20 @@ Composite action:
 
 ### Добавить новый сервис
 
+На платформе может работать **любой статически слинкованный Linux-бинарник** — не только Go-сервисы из этого репозитория. Единственное требование: бинарник подключается к локальному NATS (`127.0.0.1:4222`, credentials из env) и подписывается на нужные subjects. Docker не нужен и не установлен. Артефакт может лежать на любом URL — GitHub Releases, S3, собственный сервер; Nomad скачает и проверит checksum перед запуском.
+
 **Четыре шага, `ci.yml` и composite action не трогать:**
 
-**1. Написать сервис**
+**1. Написать сервис** (или подготовить внешний бинарник)
 
+Если сервис собирается в этом репозитории:
 ```
 cmd/newservice/main.go
 internal/services/newservice/
 ```
-
 CI автоматически подхватит его при следующем push — `shopt -s nullglob; for dir in cmd/*/`.
+
+Если сервис внешний — просто укажите URL бинарника в `artifact {}` на шаге 2.
 
 **2. Создать Nomad-джоб**
 
@@ -348,60 +352,74 @@ jobs:
 
 ### GitHub Secrets
 
-`Settings → Secrets and variables → Actions`
+`Settings → Secrets and variables → Actions → Secrets`
 
-#### Общие (используются всеми сервисами)
+#### Общие для всех deploy-workflow
 
-| Secret            | Описание |
-|-------------------|----------|
-| `DEPLOY_SSH_KEY`  | Приватный Ed25519-ключ для SSH |
-| `DEPLOY_USER`     | SSH-пользователь (`ubuntu`) |
-| `PLATFORM_DOMAIN` | Домен A-записей кластера (`nodes.example.com`). CI резолвит все A-записи, деплоит через первую доступную ноду. |
-| `NOMAD_TOKEN`     | Nomad ACL bootstrap-токен (`uuidgen`). Задаётся один раз. |
-| `NATS_USER`       | Логин NATS |
-| `NATS_PASSWORD`   | Пароль NATS |
-| `NATS_CA_KEY`     | CA приватный ключ NATS в base64 (только для setup.sh) |
-| `NATS_CA_CERT`    | CA сертификат NATS в base64 (только для setup.sh) |
-| `NOMAD_CA_KEY`    | CA приватный ключ Nomad в base64 (только для setup.sh) |
-| `NOMAD_CA_CERT`   | CA сертификат Nomad в base64 (только для setup.sh) |
-| `NOMAD_GOSSIP_KEY`| 32-байтный gossip-key Nomad в base64 (`openssl rand -base64 32`). Шифрует Serf (4648); одинаковый для всех нод. |
+| Secret              | Как получить | Описание |
+|---------------------|--------------|----------|
+| `DEPLOY_SSH_KEY`    | `ssh-keygen -t ed25519 -f deploy_key -N ""` → файл `deploy_key` | Приватный Ed25519-ключ; публичный (`deploy_key.pub`) добавить на сервер при создании VPS |
+| `DEPLOY_USER`       | имя пользователя на сервере | SSH-пользователь (`ubuntu`, `up` и т.д.) |
+| `PLATFORM_DOMAIN`   | ваш DNS-домен | Домен A-записей кластера (`nodes.example.com`). CI резолвит все A-записи, деплоит через первую доступную ноду. |
+| `NOMAD_TOKEN`       | `uuidgen` | Nomad ACL bootstrap-токен. Задаётся один раз, одинаковый для всего кластера. |
+| `HOST_FINGERPRINTS` | `ssh-keyscan -t ed25519 <NODE_IP> \| ssh-keygen -lf -` | SHA256-fingerprint(s) прод-нод (по одному на строку или через запятую). Пусто — TOFU-режим без MITM-защиты. |
+| `NATS_USER`         | придумать | Логин NATS-сервера |
+| `NATS_PASSWORD`     | `openssl rand -hex 16` | Пароль NATS-сервера |
+
+#### Только для `setup.yml` (настройка новой ноды)
+
+| Secret              | Как получить | Описание |
+|---------------------|--------------|----------|
+| `NATS_CA_KEY`       | `openssl genrsa -out nats-ca.key 4096` → `base64 -w0 < nats-ca.key` | CA приватный ключ NATS. Генерируется один раз; после записи в Secret — удалить локально. |
+| `NATS_CA_CERT`      | `openssl req -new -x509 -key nats-ca.key -days 3650 ...` → `base64 -w0 < nats-ca.crt` | CA сертификат NATS (публичный). |
+| `NOMAD_CA_KEY`      | `openssl genrsa -out nomad-ca.key 4096` → `base64 -w0 < nomad-ca.key` | CA приватный ключ Nomad. Генерируется один раз; после записи в Secret — удалить локально. |
+| `NOMAD_CA_CERT`     | `openssl req -new -x509 -key nomad-ca.key -days 3650 ...` → `base64 -w0 < nomad-ca.crt` | CA сертификат Nomad (публичный). |
+| `NOMAD_GOSSIP_KEY`  | `openssl rand -base64 32` | 32-байтный симметричный ключ Serf-шифрования. Одинаковый для всех нод кластера. |
+
+Полная инструкция генерации — раздел «Первоначальная настройка секретов» ниже.
 
 #### Gateway (`gateway-deploy.yml`)
 
-| Secret                     | Описание |
-|----------------------------|----------|
-| `ALLOWED_HOSTS`            | Разрешённые HTTP Origin (`example.com,api.example.com`) |
-| `GATEWAY_AUTH_RATE_PREFIX` | URL-префикс жёсткого rate limit (`/v1/xauth/`). Пусто — отключён. |
-| `GATEWAY_TRUSTED_PROXY`    | IP балансировщика для X-Real-IP. Пусто при DNS round-robin. |
+| Secret                     | Как получить | Описание |
+|----------------------------|--------------|----------|
+| `ALLOWED_HOSTS`            | ваш домен | Разрешённые HTTP Origin через запятую (`example.com,api.example.com`) |
+| `GATEWAY_AUTH_RATE_PREFIX` | `/v1/xauth/` | URL-префикс строгого rate limit для auth-эндпоинтов. Пусто — отключён. |
+| `GATEWAY_TRUSTED_PROXY`    | IP LB или пусто | IP балансировщика для X-Real-IP. Пусто при DNS round-robin. |
 
-#### xauth (`xauth-deploy.yml`)
+#### xauth — демо-сервис (`xauth-deploy.yml`)
 
-| Secret               | Описание |
-|----------------------|----------|
-| `AUTH_USERNAME`      | Логин пользователя |
-| `AUTH_PASSWORD`      | Пароль пользователя |
-| `AUTH_ACCESS_SECRET` | HMAC-ключ access JWT (`openssl rand -hex 32`) |
-| `AUTH_REFRESH_SECRET`| HMAC-ключ refresh JWT (`openssl rand -hex 32`) |
-| `COOKIE_DOMAIN`      | Домен для Set-Cookie (`.example.com`) |
+| Secret               | Как получить | Описание |
+|----------------------|--------------|----------|
+| `AUTH_USERNAME`      | придумать | Логин пользователя |
+| `AUTH_PASSWORD`      | придумать | Пароль пользователя |
+| `AUTH_ACCESS_SECRET` | `openssl rand -hex 32` | HMAC-ключ подписи access JWT |
+| `AUTH_REFRESH_SECRET`| `openssl rand -hex 32` | HMAC-ключ подписи refresh JWT |
+| `COOKIE_DOMAIN`      | `.example.com` | Домен для Set-Cookie (с точкой — работает на поддоменах) |
 
-#### xhttp (`xhttp-deploy.yml`)
+#### xhttp — демо-сервис (`xhttp-deploy.yml`)
 
-| Secret          | Описание |
-|-----------------|----------|
-| `DATABASE_URL`  | PostgreSQL DSN (`postgres://user:pass@host:5432/db?sslmode=require`) |
-| `ACCESS_SECRET` | HMAC-ключ валидации JWT — **должен совпадать с `AUTH_ACCESS_SECRET`** |
+| Secret          | Как получить | Описание |
+|-----------------|--------------|----------|
+| `DATABASE_URL`  | от PostgreSQL-провайдера | DSN: `postgres://user:pass@host:5432/db?sslmode=require` |
+| `ACCESS_SECRET` | = значение `AUTH_ACCESS_SECRET` | HMAC-ключ валидации JWT. **Должен совпадать с `AUTH_ACCESS_SECRET`** |
 
-#### GitHub Variables (необязательные)
+#### xws — демо-сервис (`xws-deploy.yml`)
 
-`Settings → Secrets and variables → Actions → Variables`. Не маскируются в логах.
+Дополнительных секретов нет — использует только секреты из раздела «Общие».
+
+---
+
+### GitHub Variables (необязательные)
+
+`Settings → Secrets and variables → Actions → Variables`. Значения видны в логах (не маскируются).
 
 | Variable             | По умолчанию | Описание |
 |----------------------|--------------|----------|
-| `COOKIE_SECURE`      | `true`       | `false` только при HTTP-разработке без HTTPS |
+| `COOKIE_SECURE`      | `true`       | Установить `false` при разработке без HTTPS |
 | `AUTH_ACCESS_TTL`    | `15m`        | Время жизни access JWT |
 | `AUTH_REFRESH_TTL`   | `168h`       | Время жизни refresh JWT (7 дней) |
-| `INACTIVITY_TIMEOUT` | `3m`         | Таймаут неактивной WebSocket-сессии |
-| `CACHE_TTL`          | `30s`        | TTL NATS KV кэша в xhttp |
+| `INACTIVITY_TIMEOUT` | `3m`         | Таймаут неактивной WebSocket-сессии (xws) |
+| `CACHE_TTL`          | `30s`        | TTL NATS KV кэша (xhttp) |
 
 ---
 
