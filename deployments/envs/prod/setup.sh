@@ -171,34 +171,23 @@ install_nomad() {
     return
   fi
 
-  log "Установка Nomad (HashiCorp APT)..."
+  log "Установка Nomad (как в официальной доке)..."
 
-  # 1. Сначала ставим ключ. 
-  # Используем --batch для gpg (убирает ошибку /dev/tty)
-  # Используем -fsSL для curl. 
-  curl -fsSL https://apt.releases.hashicorp.com/gpg | \
-    gpg --confdir /tmp --batch --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg || \
-    die "Не удалось скачать или импортировать GPG ключ HashiCorp"
+  # 1. Качаем ключ и деарморим его. 
+  # Добавлен флаг --batch, чтобы gpg не искал терминал (которого нет в GitHub Actions)
+  wget -O- https://apt.releases.hashicorp.com/gpg | \
+    gpg --batch --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
 
-  # 2. Сверка fingerprint (твой код из скрипта, он ок)
-  local expected_fp="798AEC654E5C15428C8E42EEAA16FCBCA621E701"
-  local actual_fp
-  actual_fp=$(gpg --show-keys --with-colons /usr/share/keyrings/hashicorp-archive-keyring.gpg | awk -F: '/^fpr:/ {print $10; exit}')
-  
-  if [ "$actual_fp" != "$expected_fp" ]; then
-    die "HashiCorp GPG fingerprint mismatch: expected $expected_fp, got $actual_fp"
-  fi
-
-  # 3. Добавляем репозиторий. 
-  # ВАЖНО: используем tee, так как мы внутри sudo bash, а перенаправление > может капризничать
-  echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+  # 2. Добавляем репозиторий. 
+  # Используем их официальный способ определения кодового имени через /etc/os-release
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(grep -oP '(?<=UBUNTU_CODENAME=).*' /etc/os-release || lsb_release -cs) main" \
     | tee /etc/apt/sources.list.d/hashicorp.list
 
-  # 4. Обновляемся и ставим. 
-  # Добавляем -o Acquire::AllowInsecureRepositories=true на случай если Selectel опять выплюнет 404
-  apt-get update -y -q -o Acquire::AllowInsecureRepositories=true || true
-  apt-get install -y -q --no-install-recommends nomad
-  
+  # 3. Обновляем и ставим
+  # ВАЖНО: оставляем "|| true" только здесь, чтобы битый Selectel не прервал процесс
+  apt-get update -y || true
+  apt-get install -y nomad
+
   info "Установлен: $(nomad version | head -1)"
 }
 
