@@ -38,7 +38,7 @@ jobs:
       CACHE_TTL:       ${{ vars.CACHE_TTL || '30s' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download checksums
         uses: actions/download-artifact@v4
