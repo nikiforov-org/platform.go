@@ -726,7 +726,7 @@ print_summary() {
 # Точка входа
 # =============================================================================
 setup_swap
-install_base
+#install_base
 install_nomad
 install_nats
 clone_repo
