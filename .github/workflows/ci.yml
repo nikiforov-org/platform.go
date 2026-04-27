@@ -62,12 +62,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false  # golangci-lint сам управляет кэшем
 
       - name: Golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v2.11.4
+          version: latest
 
       - name: Govulncheck
         uses: golang/govulncheck-action@v1
