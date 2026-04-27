@@ -3,17 +3,19 @@
 # Подготовка новой VPS через GitHub Actions.
 # Альтернатива ручному запуску setup.sh — все секреты из GitHub Secrets.
 #
-# Предпочтительный способ: запустить setup.sh прямо на сервере:
-#   wget -qO- https://raw.githubusercontent.com/OWNER/REPO/main/deployments/envs/prod/setup.sh \
-#     | PLATFORM_DOMAIN=nodes.example.com NATS_USER=nats NATS_PASSWORD=secret bash
+# Предпочтительный способ: запустить setup.sh прямо на сервере (полный список
+# обязательных переменных — в шапке самого setup.sh).
 #
 # GitHub Secrets, необходимые для этого workflow:
 #   DEPLOY_SSH_KEY   — приватный Ed25519-ключ
 #   DEPLOY_USER      — SSH-пользователь (например: ubuntu)
 #   NATS_USER        — логин NATS-сервера
 #   NATS_PASSWORD    — пароль NATS-сервера
-#   NATS_CA_KEY      — приватный ключ CA (PEM, генерируется один раз локально)
-#   NATS_CA_CERT     — сертификат CA (PEM)
+#   NATS_CA_KEY      — приватный ключ CA NATS  (PEM, генерируется один раз локально)
+#   NATS_CA_CERT     — сертификат CA NATS      (PEM)
+#   NOMAD_CA_KEY     — приватный ключ CA Nomad (PEM, генерируется один раз локально)
+#   NOMAD_CA_CERT    — сертификат CA Nomad     (PEM)
+#   NOMAD_GOSSIP_KEY — 32-байтный gossip-key Nomad в base64 (openssl rand -base64 32)
 #   NOMAD_TOKEN      — UUID, используется как bootstrap-секрет Nomad ACL (uuidgen)
 
 name: Setup VPS
@@ -53,7 +55,8 @@ jobs:
 
           # Получаем host keys целевой ноды через ssh-keyscan и помещаем в known_hosts.
           # Если HOST_FINGERPRINT задан — верифицируем (защита от MITM первого
-          # подключения, утечка NATS_CA_KEY/NOMAD_TOKEN на чужой эндпоинт исключена).
+          # подключения, утечка NATS_CA_KEY/NOMAD_CA_KEY/NOMAD_GOSSIP_KEY/NOMAD_TOKEN
+          # на чужой эндпоинт исключена).
           # Если пуст — TOFU: первый ключ принимаем, fingerprint выводится в лог
           # для последующей сверки оператором.
           ssh-keyscan -t ed25519,ecdsa,rsa "$NODE_IP" > /tmp/host_keys 2>/dev/null
@@ -86,6 +89,9 @@ jobs:
           NATS_PASSWORD: ${{ secrets.NATS_PASSWORD }}
           NATS_CA_KEY: ${{ secrets.NATS_CA_KEY }}
           NATS_CA_CERT: ${{ secrets.NATS_CA_CERT }}
+          NOMAD_CA_KEY: ${{ secrets.NOMAD_CA_KEY }}
+          NOMAD_CA_CERT: ${{ secrets.NOMAD_CA_CERT }}
+          NOMAD_GOSSIP_KEY: ${{ secrets.NOMAD_GOSSIP_KEY }}
           NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
           PLATFORM_DOMAIN: ${{ inputs.platform_domain }}
           REPO_URL: https://github.com/${{ github.repository }}.git
@@ -96,6 +102,9 @@ jobs:
           NATS_PASSWORD="${NATS_PASSWORD}"
           NATS_CA_KEY="$(printf '%s' "${NATS_CA_KEY}" | base64 -w0)"
           NATS_CA_CERT="$(printf '%s' "${NATS_CA_CERT}" | base64 -w0)"
+          NOMAD_CA_KEY="$(printf '%s' "${NOMAD_CA_KEY}" | base64 -w0)"
+          NOMAD_CA_CERT="$(printf '%s' "${NOMAD_CA_CERT}" | base64 -w0)"
+          NOMAD_GOSSIP_KEY="${NOMAD_GOSSIP_KEY}"
           NOMAD_TOKEN="${NOMAD_TOKEN}"
           REPO_URL="${REPO_URL}"
           EOF

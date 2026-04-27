@@ -12,6 +12,10 @@
 #       NATS_PASSWORD=secret \
 #       NATS_CA_KEY="$(base64 -w0 < nats-ca.key)" \
 #       NATS_CA_CERT="$(base64 -w0 < nats-ca.crt)" \
+#       NOMAD_CA_KEY="$(base64 -w0 < nomad-ca.key)" \
+#       NOMAD_CA_CERT="$(base64 -w0 < nomad-ca.crt)" \
+#       NOMAD_GOSSIP_KEY="$(openssl rand -base64 32)" \
+#       NOMAD_TOKEN=$(uuidgen) \
 #       bash
 # ─────────────────────────────────────────────────────────────────────────────
 #
@@ -19,8 +23,14 @@
 #   PLATFORM_DOMAIN  — домен A-записей кластера (все ноды), например: nodes.example.com
 #   NATS_USER        — логин NATS-сервера
 #   NATS_PASSWORD    — пароль NATS-сервера
-#   NATS_CA_KEY      — приватный ключ CA в base64 (base64 -w0 < nats-ca.key)
-#   NATS_CA_CERT     — сертификат CA в base64   (base64 -w0 < nats-ca.crt)
+#   NATS_CA_KEY      — приватный ключ CA NATS  в base64 (base64 -w0 < nats-ca.key)
+#   NATS_CA_CERT     — сертификат CA NATS      в base64 (base64 -w0 < nats-ca.crt)
+#   NOMAD_CA_KEY     — приватный ключ CA Nomad в base64 (base64 -w0 < nomad-ca.key)
+#   NOMAD_CA_CERT    — сертификат CA Nomad     в base64 (base64 -w0 < nomad-ca.crt)
+#   NOMAD_GOSSIP_KEY — gossip-key Nomad в base64 (32 байта; openssl rand -base64 32).
+#                      Шифрует Serf-протокол (4648) — у Nomad собственное
+#                      симметричное шифрование, через TLS Serf не работает.
+#   NOMAD_TOKEN      — UUID для Nomad ACL bootstrap (uuidgen)
 #
 # Необязательные:
 #   NATS_VERSION     — версия NATS Server    (по умолчанию: 2.10.22)
@@ -34,14 +44,20 @@ set -euo pipefail
 : "${PLATFORM_DOMAIN:?Обязательная переменная: PLATFORM_DOMAIN}"
 : "${NATS_USER:?Обязательная переменная: NATS_USER}"
 : "${NATS_PASSWORD:?Обязательная переменная: NATS_PASSWORD}"
-: "${NATS_CA_KEY:?Обязательная переменная: NATS_CA_KEY (base64 приватного ключа CA)}"
-: "${NATS_CA_CERT:?Обязательная переменная: NATS_CA_CERT (base64 сертификата CA)}"
+: "${NATS_CA_KEY:?Обязательная переменная: NATS_CA_KEY (base64 приватного ключа CA NATS)}"
+: "${NATS_CA_CERT:?Обязательная переменная: NATS_CA_CERT (base64 сертификата CA NATS)}"
+: "${NOMAD_CA_KEY:?Обязательная переменная: NOMAD_CA_KEY (base64 приватного ключа CA Nomad)}"
+: "${NOMAD_CA_CERT:?Обязательная переменная: NOMAD_CA_CERT (base64 сертификата CA Nomad)}"
+: "${NOMAD_GOSSIP_KEY:?Обязательная переменная: NOMAD_GOSSIP_KEY (32 байта в base64; openssl rand -base64 32)}"
 : "${NOMAD_TOKEN:?Обязательная переменная: NOMAD_TOKEN (UUID для Nomad ACL)}"
 
 # PEM-ключи передаются через base64 чтобы не ломать env-файл многострочным содержимым.
 # Декодируем один раз здесь; дальше используем как обычные переменные.
+# NOMAD_GOSSIP_KEY оставляем как есть — Nomad сам ожидает base64 в server.encrypt.
 NATS_CA_KEY=$(printf '%s' "$NATS_CA_KEY" | base64 -d)
 NATS_CA_CERT=$(printf '%s' "$NATS_CA_CERT" | base64 -d)
+NOMAD_CA_KEY=$(printf '%s' "$NOMAD_CA_KEY" | base64 -d)
+NOMAD_CA_CERT=$(printf '%s' "$NOMAD_CA_CERT" | base64 -d)
 
 NATS_VERSION="${NATS_VERSION:-2.10.22}"
 REPO_URL="${REPO_URL:-}"
@@ -212,6 +228,12 @@ server {
   enabled          = true
   bootstrap_expect = 1
 
+  # Шифрование Serf (4648) — задаётся CLI-флагом nomad agent -encrypt=...
+  # в systemd-юните ниже. В HCL прописать нельзя: Nomad не раскрывает
+  # env-переменные в server.encrypt (только в retry_join). Хранить ключ
+  # как литерал в /etc/nomad/nomad.hcl (chmod 644) — слабее защита, чем
+  # в /etc/nomad/env (chmod 600). См. I-H8.
+
   # raft_multiplier=5 — масштабирует Raft-таймауты ×5 (heartbeat 1s→5s,
   # election 1s→5s, leader_lease 0.5s→2.5s). Платформа multi-DC (cross-DC
   # latency ≥50ms, transient packet loss); default=1 (LAN <10ms) флапает
@@ -259,11 +281,34 @@ telemetry {
 acl {
   enabled = true
 }
+
+# TLS для inter-node RPC (4647). Через RPC идут Raft-консенсус и job specs,
+# а в job specs — реальные секреты (NATS_PASSWORD, AUTH_ACCESS_SECRET и др.
+# через NOMAD_VAR_*). Без TLS на cross-DC через WAN всё это идёт в открытом
+# виде — атакующий с MITM собирает секреты непрерывно. См. I-H8.
+#
+# http = false (default): HTTP API на 127.0.0.1, в threat model не входит;
+# локальные curl/nomad CLI остаются на plain HTTP без cert env vars
+# (ACL bootstrap, healthcheck wait-loop, deploy-action probe).
+#
+# verify_server_hostname = true: при исходящем RPC Nomad проверяет, что
+# cert пира содержит SAN server.global.nomad (region=global default).
+# CA-ключ хранится только в GitHub Secret NOMAD_CA_KEY; на сервере
+# остаются только публичный ca.crt + node.crt + node.key.
+tls {
+  rpc                    = true
+  verify_server_hostname = true
+
+  ca_file   = "/etc/nomad/ca.crt"
+  cert_file = "/etc/nomad/node.crt"
+  key_file  = "/etc/nomad/node.key"
+}
 HCL
 
   # Env-файл для systemd (chmod 600 — только root)
   cat > "$NOMAD_CONF_DIR/env" << ENV
 PLATFORM_DOMAIN=${PLATFORM_DOMAIN}
+NOMAD_GOSSIP_KEY=${NOMAD_GOSSIP_KEY}
 ENV
   chmod 600 "$NOMAD_CONF_DIR/env"
 
@@ -276,7 +321,10 @@ Wants=network-online.target
 
 [Service]
 EnvironmentFile=/etc/nomad/env
-ExecStart=/usr/bin/nomad agent -config=/etc/nomad/nomad.hcl
+# -encrypt: gossip-key для Serf (4648). Передаём через CLI-флаг, чтобы ключ
+# жил в /etc/nomad/env (chmod 600), а не в /etc/nomad/nomad.hcl (chmod 644).
+# systemd раскрывает ${NOMAD_GOSSIP_KEY} из EnvironmentFile.
+ExecStart=/usr/bin/nomad agent -config=/etc/nomad/nomad.hcl -encrypt=${NOMAD_GOSSIP_KEY}
 ExecReload=/bin/kill -HUP $MAINPID
 KillSignal=SIGINT
 KillMode=process
@@ -344,6 +392,63 @@ install_nats() {
     systemctl restart nats
   fi
   info "Установлен: $(nats-server --version)"
+}
+
+# =============================================================================
+# TLS-сертификаты Nomad
+#
+# Симметрично с NATS: CA-ключ из env, используется только для подписи cert
+# этой ноды и не пишется на ФС (process substitution в openssl x509 -CAkey).
+# На сервере остаётся только:
+#   /etc/nomad/ca.crt   — публичный сертификат CA (для проверки других нод)
+#   /etc/nomad/node.crt — сертификат этой ноды (подписан CA)
+#   /etc/nomad/node.key — приватный ключ ноды (chmod 600, owner nomad)
+#
+# SAN node-cert: server.global.nomad + client.global.nomad + IP ноды + 127.0.0.1.
+# DNS-имена обязательны для verify_server_hostname=true в nomad.hcl: Nomad
+# валидирует, что cert пира содержит именно эти SAN (region=global default).
+# При смене region в nomad.hcl — менять и SAN здесь.
+# =============================================================================
+generate_nomad_certs() {
+  log "Генерация TLS-сертификатов Nomad..."
+
+  command -v openssl >/dev/null || apt-get install -y -q --no-install-recommends openssl
+
+  printf '%s\n' "$NOMAD_CA_CERT" > "$NOMAD_CONF_DIR/ca.crt"
+  chmod 644 "$NOMAD_CONF_DIR/ca.crt"
+
+  # ECDSA P-256 — соответствует выбору для NATS-cert.
+  openssl ecparam -name prime256v1 -genkey -noout -out "$NOMAD_CONF_DIR/node.key" 2>/dev/null
+  chmod 600 "$NOMAD_CONF_DIR/node.key"
+
+  openssl req -new \
+    -key "$NOMAD_CONF_DIR/node.key" \
+    -out /tmp/nomad-node.csr \
+    -subj "/CN=server.global.nomad/O=platform" \
+    2>/dev/null
+
+  printf 'subjectAltName=DNS:server.global.nomad,DNS:client.global.nomad,IP:%s,IP:127.0.0.1\n' \
+    "$NODE_IP" > /tmp/nomad-node-san.cnf
+
+  # Подписываем 10 лет; CA-key через process substitution — на ФС не пишется.
+  openssl x509 -req \
+    -in /tmp/nomad-node.csr \
+    -CA "$NOMAD_CONF_DIR/ca.crt" \
+    -CAkey <(printf '%s\n' "$NOMAD_CA_KEY") \
+    -CAcreateserial \
+    -out "$NOMAD_CONF_DIR/node.crt" \
+    -days 3650 \
+    -extfile /tmp/nomad-node-san.cnf \
+    2>/dev/null
+
+  chmod 644 "$NOMAD_CONF_DIR/node.crt"
+  rm -f /tmp/nomad-node.csr /tmp/nomad-node-san.cnf /tmp/nomad-ca.srl
+
+  chown nomad:nomad "$NOMAD_CONF_DIR/ca.crt" "$NOMAD_CONF_DIR/node.crt" "$NOMAD_CONF_DIR/node.key"
+
+  local expires
+  expires=$(openssl x509 -noout -enddate -in "$NOMAD_CONF_DIR/node.crt" | cut -d= -f2)
+  info "Сертификат ноды действителен до: $expires"
 }
 
 # =============================================================================
@@ -626,6 +731,7 @@ install_nomad
 install_nats
 clone_repo
 setup_nomad
+generate_nomad_certs
 generate_nats_certs
 setup_nats
 setup_firewall

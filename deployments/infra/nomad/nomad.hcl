@@ -4,7 +4,9 @@
 # Один файл для всех нод.
 #
 # Переменные окружения (задаются в /etc/nomad/env, раскрываются Nomad при старте):
-#   PLATFORM_DOMAIN — домен A-записей кластера (все ноды)
+#   PLATFORM_DOMAIN  — домен A-записей кластера (все ноды)
+#   NOMAD_GOSSIP_KEY — 32-байтный gossip-key в base64 для шифрования Serf (4648).
+#                       Одинаковый для всех нод; см. server.encrypt ниже.
 #
 # bootstrap_expect = 1: нода сразу готова к работе.
 # server_join retry_join: при наличии других нод в DNS автоматически входит
@@ -45,6 +47,14 @@ server {
   # в этом окне, может быть потерян. Порядок развёртывания первого кластера —
   # последовательный (см. deployments/envs/prod/prod.md).
   bootstrap_expect = 1
+
+  # Шифрование Serf-протокола (4648) — задаётся CLI-флагом nomad agent
+  # -encrypt=${NOMAD_GOSSIP_KEY} в systemd-юните (см. setup.sh). В HCL
+  # прописать нельзя: Nomad не раскрывает env-переменные в server.encrypt
+  # (только в retry_join). Хранить ключ литералом в этом файле небезопасно
+  # (chmod 644 < chmod 600 для /etc/nomad/env). Без шифрования: топология
+  # кластера (ноды, leadership, статусы) идёт между ДЦ в открытом виде.
+  # См. I-H8.
 
   # raft_multiplier=5 — масштабирует все Raft-таймауты ×5 (heartbeat 1s→5s,
   # election 1s→5s, leader_lease 0.5s→2.5s). Платформа ориентирована на
@@ -100,4 +110,26 @@ telemetry {
 # в GitHub Secrets как NOMAD_TOKEN.
 acl {
   enabled = true
+}
+
+# TLS для inter-node RPC (4647). Через RPC идут Raft-консенсус и job specs,
+# а в job specs — реальные секреты (NATS_PASSWORD, AUTH_ACCESS_SECRET и др.
+# через NOMAD_VAR_*). Без TLS на cross-DC через WAN всё это идёт в открытом
+# виде — атакующий с MITM собирает секреты непрерывно. См. I-H8.
+#
+# http = false (default): HTTP API на 127.0.0.1, в threat model не входит;
+# локальные curl/nomad CLI остаются на plain HTTP без cert env vars
+# (ACL bootstrap, healthcheck wait-loop, deploy-action probe).
+#
+# verify_server_hostname = true: при исходящем RPC Nomad проверяет, что
+# cert пира содержит SAN server.global.nomad (region=global default).
+# CA-ключ хранится только в GitHub Secret NOMAD_CA_KEY; на сервере
+# остаются только публичный ca.crt + node.crt + node.key.
+tls {
+  rpc                    = true
+  verify_server_hostname = true
+
+  ca_file   = "/etc/nomad/ca.crt"
+  cert_file = "/etc/nomad/node.crt"
+  key_file  = "/etc/nomad/node.key"
 }
