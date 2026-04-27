@@ -122,14 +122,6 @@ jobs:
             deployments/envs/prod/setup.sh \
             "${DEPLOY_USER}@${NODE_IP}:/tmp/"
 
-      - name: Fix broken repositories
-        env:
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          NODE_IP: ${{ inputs.node_ip }}
-        run: |
-          SSH="ssh -i ~/.ssh/setup_key -o StrictHostKeyChecking=yes"
-          $SSH "${DEPLOY_USER}@${NODE_IP}" 'sudo sed -i "s/^deb.*bullseye-backports/# \0/" /etc/apt/sources.list /etc/apt/sources.list.d/*' || true
-
       - name: Run setup.sh
         env:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}

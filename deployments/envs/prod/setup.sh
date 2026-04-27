@@ -142,7 +142,7 @@ setup_swap() {
 # =============================================================================
 install_base() {
   log "Установка базовых пакетов..."
-  apt-get update -q
+  apt-get update ---allow-releaseinfo-change || warn "Некоторые репозитории недоступны, пытаемся продолжить..."
   # --no-install-recommends: ставим только Depends:, без Recommends:.
   # Меньше пакетов на диске, меньше демонов (rsyslog/policykit и т.п.),
   # меньше attack surface. Все перечисленные утилиты сохраняют функциональность
