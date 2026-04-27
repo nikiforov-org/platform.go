@@ -38,11 +38,6 @@
 
 set -euo pipefail
 
-if [[ $EUID -ne 0 ]]; then
-   echo "ОШИБКА: Скрипт запущен НЕ под рутом (ваш UID: $EUID)"
-   exit 1
-fi
-
 # =============================================================================
 # Переменные
 # =============================================================================
@@ -146,19 +141,13 @@ setup_swap() {
 # Базовые пакеты
 # =============================================================================
 install_base() {
-  log "Очистка и обновление кэша пакетов..."
-  
-  # Универсальное удаление проблемного backports из всех списков
-  # Это сработает и на Debian, и на Ubuntu, независимо от зеркала
-  sudo sed -i '/backports/d' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
-  
-  # Обновляемся. --allow-releaseinfo-change нужен, если дистрибутив сменил статус.
-  # || true гарантирует, что скрипт не упадет, если какое-то зеркало просто "тупит".
-  sudo apt-get update -y -q --allow-releaseinfo-change || warn "Некоторые зеркала недоступны, продолжаем..."
-
   log "Установка базовых пакетов..."
-  # Теперь установка curl и прочего пройдет успешно, так как apt больше не блокирует процесс
-  sudo apt-get install -y -q --no-install-recommends \
+  apt-get update -q
+  # --no-install-recommends: ставим только Depends:, без Recommends:.
+  # Меньше пакетов на диске, меньше демонов (rsyslog/policykit и т.п.),
+  # меньше attack surface. Все перечисленные утилиты сохраняют функциональность
+  # без recommends (curl, dig, lsb_release, ufw, gpg работают на Depends).
+  apt-get install -y -q --no-install-recommends \
     curl wget git unzip gnupg lsb-release ufw dnsutils
 }
 
@@ -168,35 +157,19 @@ install_base() {
 install_nomad() {
   if command -v nomad &>/dev/null; then
     info "Nomad уже установлен: $(nomad version | head -1)"
+    # setup.sh не апгрейдит Nomad автоматически: в скрипте нет pinned
+    # NOMAD_VERSION (Nomad ставится из HashiCorp APT = latest на момент
+    # первой установки). Upgrade — отдельная ops-процедура на каждой ноде:
+    #   apt-get update && apt-get install --only-upgrade -y --no-install-recommends nomad
+    #   systemctl restart nomad
+    # Rolling по нодам даёт zero-downtime для Jobs (Raft переизбирает лидера,
+    # client-allocations сохраняются).
     return
   fi
-
   log "Установка Nomad (HashiCorp APT)..."
-
-  # 1. Чистим старье
-  rm -f /usr/share/keyrings/hashicorp-archive-keyring.gpg /etc/apt/sources.list.d/hashicorp.list
-
-  # 2. Качаем ключ с проверкой. 
-  # Добавляем -L (follow redirects) и заменяем wget на curl для теста
-  if ! curl -fsSL https://apt.releases.hashicorp.com/gpg -o /tmp/hashicorp.gpg; then
-     warn "Curl не смог скачать ключ, пробуем wget..."
-     wget -qO /tmp/hashicorp.gpg https://apt.releases.hashicorp.com/gpg || die "404: Ключ HashiCorp недоступен. Проверь интернет на ноде: ping google.com"
-  fi
-
-  # 3. Деарморим (флаг --batch критичен для CI)
-  cat /tmp/hashicorp.gpg | gpg --batch --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-  rm -f /tmp/hashicorp.gpg
-
-  # 4. Добавляем репозиторий. 
-  # ВНИМАНИЕ: Проверь, чтобы эта строка в твоем редакторе была ОДНОЙ строкой без разрывов
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-    | tee /etc/apt/sources.list.d/hashicorp.list
-
-  # 5. Обновление и установка
-  # Оставляем || true, чтобы битые зеркала Selectel не мешали
-  apt-get update -y || true
-  apt-get install -y nomad
-
+  wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(grep -oP '(?<=UBUNTU_CODENAME=).*' /etc/os-release || lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+  sudo apt update && sudo apt install nomad -y -q --no-install-recommends
   info "Установлен: $(nomad version | head -1)"
 }
 
