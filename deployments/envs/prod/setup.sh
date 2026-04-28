@@ -555,8 +555,8 @@ jetstream {
 }
 
 authorization {
-  user:     "${NATS_USER}"
-  password: "${NATS_PASSWORD}"
+  user:     $NATS_USER
+  password: $NATS_PASSWORD
 }
 CONF
 
