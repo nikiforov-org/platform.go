@@ -39,10 +39,10 @@ wget -qO- https://raw.githubusercontent.com/OWNER/REPO/main/deployments/envs/pro
   | PLATFORM_DOMAIN=nodes.example.com \
     NATS_USER=nats \
     NATS_PASSWORD=secret \
-    NATS_CA_KEY="$(base64 -w0 < nats-ca.key)" \
-    NATS_CA_CERT="$(base64 -w0 < nats-ca.crt)" \
-    NOMAD_CA_KEY="$(base64 -w0 < nomad-ca.key)" \
-    NOMAD_CA_CERT="$(base64 -w0 < nomad-ca.crt)" \
+    NATS_CA_KEY="$(cat nats-ca.key)" \
+    NATS_CA_CERT="$(cat nats-ca.crt)" \
+    NOMAD_CA_KEY="$(cat nomad-ca.key)" \
+    NOMAD_CA_CERT="$(cat nomad-ca.crt)" \
     NOMAD_GOSSIP_KEY="$(openssl rand -base64 32)" \
     NOMAD_TOKEN=$(uuidgen) \
     bash
@@ -370,10 +370,10 @@ jobs:
 
 | Secret              | Как получить | Описание |
 |---------------------|--------------|----------|
-| `NATS_CA_KEY`       | см. «Первоначальная настройка секретов» | CA приватный ключ NATS. Генерируется один раз; после записи в Secret — удалить локально. |
-| `NATS_CA_CERT`      | см. «Первоначальная настройка секретов» | CA сертификат NATS (публичный). |
-| `NOMAD_CA_KEY`      | см. «Первоначальная настройка секретов» | CA приватный ключ Nomad. Генерируется один раз; после записи в Secret — удалить локально. |
-| `NOMAD_CA_CERT`     | см. «Первоначальная настройка секретов» | CA сертификат Nomad (публичный). |
+| `NATS_CA_KEY`       | содержимое `nats-ca.key` (PEM) | CA приватный ключ NATS. Генерируется один раз; после записи в Secret — удалить локально. |
+| `NATS_CA_CERT`      | содержимое `nats-ca.crt` (PEM) | CA сертификат NATS (публичный). |
+| `NOMAD_CA_KEY`      | содержимое `nomad-ca.key` (PEM) | CA приватный ключ Nomad. Генерируется один раз; после записи в Secret — удалить локально. |
+| `NOMAD_CA_CERT`     | содержимое `nomad-ca.crt` (PEM) | CA сертификат Nomad (публичный). |
 | `NOMAD_GOSSIP_KEY`  | `openssl rand -base64 32` | 32-байтный симметричный ключ Serf-шифрования. Одинаковый для всех нод кластера. |
 
 Полная инструкция генерации — раздел «Первоначальная настройка секретов» ниже.
@@ -431,11 +431,11 @@ openssl genrsa -out nats-ca.key 4096
 openssl req -new -x509 -key nats-ca.key -out nats-ca.crt -days 3650 \
   -subj "/CN=platform-nats-ca/O=platform"
 
-# GitHub Secret NATS_CA_KEY — только ключ (не сертификат):
-base64 -w0 < nats-ca.key
+# GitHub Secret NATS_CA_KEY — вставить содержимое файла целиком (только ключ, не сертификат):
+cat nats-ca.key
 
-# GitHub Secret NATS_CA_CERT — только сертификат (не ключ):
-base64 -w0 < nats-ca.crt
+# GitHub Secret NATS_CA_CERT — вставить содержимое файла целиком (только сертификат, не ключ):
+cat nats-ca.crt
 
 # Удалить локальные файлы — CA-ключ нигде не хранится!
 rm nats-ca.key nats-ca.crt
@@ -447,11 +447,11 @@ openssl genrsa -out nomad-ca.key 4096
 openssl req -new -x509 -key nomad-ca.key -out nomad-ca.crt -days 3650 \
   -subj "/CN=platform-nomad-ca/O=platform"
 
-# GitHub Secret NOMAD_CA_KEY — только ключ (не сертификат):
-base64 -w0 < nomad-ca.key
+# GitHub Secret NOMAD_CA_KEY — вставить содержимое файла целиком (только ключ, не сертификат):
+cat nomad-ca.key
 
-# GitHub Secret NOMAD_CA_CERT — только сертификат (не ключ):
-base64 -w0 < nomad-ca.crt
+# GitHub Secret NOMAD_CA_CERT — вставить содержимое файла целиком (только сертификат, не ключ):
+cat nomad-ca.crt
 
 # Удалить локальные файлы — CA-ключ нигде не хранится!
 rm nomad-ca.key nomad-ca.crt

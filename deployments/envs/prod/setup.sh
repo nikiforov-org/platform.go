@@ -10,10 +10,10 @@
 #     | PLATFORM_DOMAIN=nodes.example.com \
 #       NATS_USER=nats \
 #       NATS_PASSWORD=secret \
-#       NATS_CA_KEY="$(base64 -w0 < nats-ca.key)" \
-#       NATS_CA_CERT="$(base64 -w0 < nats-ca.crt)" \
-#       NOMAD_CA_KEY="$(base64 -w0 < nomad-ca.key)" \
-#       NOMAD_CA_CERT="$(base64 -w0 < nomad-ca.crt)" \
+#       NATS_CA_KEY="$(cat nats-ca.key)" \
+#       NATS_CA_CERT="$(cat nats-ca.crt)" \
+#       NOMAD_CA_KEY="$(cat nomad-ca.key)" \
+#       NOMAD_CA_CERT="$(cat nomad-ca.crt)" \
 #       NOMAD_GOSSIP_KEY="$(openssl rand -base64 32)" \
 #       NOMAD_TOKEN=$(uuidgen) \
 #       bash
@@ -23,10 +23,10 @@
 #   PLATFORM_DOMAIN  — домен A-записей кластера (все ноды), например: nodes.example.com
 #   NATS_USER        — логин NATS-сервера
 #   NATS_PASSWORD    — пароль NATS-сервера
-#   NATS_CA_KEY      — приватный ключ CA NATS  в base64 (base64 -w0 < nats-ca.key)
-#   NATS_CA_CERT     — сертификат CA NATS      в base64 (base64 -w0 < nats-ca.crt)
-#   NOMAD_CA_KEY     — приватный ключ CA Nomad в base64 (base64 -w0 < nomad-ca.key)
-#   NOMAD_CA_CERT    — сертификат CA Nomad     в base64 (base64 -w0 < nomad-ca.crt)
+#   NATS_CA_KEY      — приватный ключ CA NATS  (PEM; cat nats-ca.key)
+#   NATS_CA_CERT     — сертификат CA NATS      (PEM; cat nats-ca.crt)
+#   NOMAD_CA_KEY     — приватный ключ CA Nomad (PEM; cat nomad-ca.key)
+#   NOMAD_CA_CERT    — сертификат CA Nomad     (PEM; cat nomad-ca.crt)
 #   NOMAD_GOSSIP_KEY — gossip-key Nomad в base64 (32 байта; openssl rand -base64 32).
 #                      Шифрует Serf-протокол (4648) — у Nomad собственное
 #                      симметричное шифрование, через TLS Serf не работает.
@@ -44,20 +44,13 @@ set -euo pipefail
 : "${PLATFORM_DOMAIN:?Обязательная переменная: PLATFORM_DOMAIN}"
 : "${NATS_USER:?Обязательная переменная: NATS_USER}"
 : "${NATS_PASSWORD:?Обязательная переменная: NATS_PASSWORD}"
-: "${NATS_CA_KEY:?Обязательная переменная: NATS_CA_KEY (base64 приватного ключа CA NATS)}"
-: "${NATS_CA_CERT:?Обязательная переменная: NATS_CA_CERT (base64 сертификата CA NATS)}"
-: "${NOMAD_CA_KEY:?Обязательная переменная: NOMAD_CA_KEY (base64 приватного ключа CA Nomad)}"
-: "${NOMAD_CA_CERT:?Обязательная переменная: NOMAD_CA_CERT (base64 сертификата CA Nomad)}"
+: "${NATS_CA_KEY:?Обязательная переменная: NATS_CA_KEY (PEM приватного ключа CA NATS)}"
+: "${NATS_CA_CERT:?Обязательная переменная: NATS_CA_CERT (PEM сертификата CA NATS)}"
+: "${NOMAD_CA_KEY:?Обязательная переменная: NOMAD_CA_KEY (PEM приватного ключа CA Nomad)}"
+: "${NOMAD_CA_CERT:?Обязательная переменная: NOMAD_CA_CERT (PEM сертификата CA Nomad)}"
 : "${NOMAD_GOSSIP_KEY:?Обязательная переменная: NOMAD_GOSSIP_KEY (32 байта в base64; openssl rand -base64 32)}"
 : "${NOMAD_TOKEN:?Обязательная переменная: NOMAD_TOKEN (UUID для Nomad ACL)}"
 
-# PEM-ключи передаются через base64 чтобы не ломать env-файл многострочным содержимым.
-# Декодируем один раз здесь; дальше используем как обычные переменные.
-# NOMAD_GOSSIP_KEY оставляем как есть — Nomad сам ожидает base64 в server.encrypt.
-NATS_CA_KEY=$(printf '%s' "$NATS_CA_KEY" | base64 -d)
-NATS_CA_CERT=$(printf '%s' "$NATS_CA_CERT" | base64 -d)
-NOMAD_CA_KEY=$(printf '%s' "$NOMAD_CA_KEY" | base64 -d)
-NOMAD_CA_CERT=$(printf '%s' "$NOMAD_CA_CERT" | base64 -d)
 
 NATS_VERSION="${NATS_VERSION:-2.10.22}"
 REPO_URL="${REPO_URL:-}"
@@ -401,7 +394,7 @@ generate_nomad_certs() {
   printf '%s\n' "$NOMAD_CA_CERT" > "$NOMAD_CONF_DIR/ca.crt"
   chmod 644 "$NOMAD_CONF_DIR/ca.crt"
   openssl x509 -noout -in "$NOMAD_CONF_DIR/ca.crt" 2>/dev/null \
-    || die "NOMAD_CA_CERT: невалидный сертификат — убедитесь что секрет задан как base64 (base64 -w0 < nomad-ca.crt)"
+    || die "NOMAD_CA_CERT: невалидный сертификат — значение секрета должно быть содержимым nomad-ca.crt (PEM)"
 
   # ECDSA P-256 — соответствует выбору для NATS-cert.
   openssl ecparam -name prime256v1 -genkey -noout -out "$NOMAD_CONF_DIR/node.key" #2>/dev/null
@@ -459,7 +452,7 @@ generate_nats_certs() {
   printf '%s\n' "$NATS_CA_CERT" > "$NATS_CONF_DIR/ca.crt"
   chmod 644 "$NATS_CONF_DIR/ca.crt"
   openssl x509 -noout -in "$NATS_CONF_DIR/ca.crt" 2>/dev/null \
-    || die "NATS_CA_CERT: невалидный сертификат — убедитесь что секрет задан как base64 (base64 -w0 < nats-ca.crt)"
+    || die "NATS_CA_CERT: невалидный сертификат — значение секрета должно быть содержимым nats-ca.crt (PEM)"
 
   # Ключ ноды: ECDSA P-256 — NIST-current, защита до 2050+, ~3× быстрее
   # TLS-handshake чем RSA-2048. Алгоритм node-key независим от алгоритма CA-key
