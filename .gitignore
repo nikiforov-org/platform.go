@@ -5,3 +5,5 @@ gateway
 xauth
 xhttp
 xws
+nats-ca.*
+nomad-ca.*

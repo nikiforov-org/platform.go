@@ -396,9 +396,6 @@ install_nats() {
 generate_nomad_certs() {
   log "Генерация TLS-сертификатов Nomad..."
 
-  printf '%s' "$NOMAD_CA_CERT" | base64 -d | openssl x509 -noout -text
-  printf '%s' "$NOMAD_CA_KEY"  | base64 -d | openssl pkey -noout -text    
-
   command -v openssl >/dev/null || apt-get install -y -q --no-install-recommends openssl
 
   printf '%s\n' "$NOMAD_CA_CERT" > "$NOMAD_CONF_DIR/ca.crt"
@@ -418,18 +415,24 @@ generate_nomad_certs() {
   printf 'subjectAltName=DNS:server.global.nomad,DNS:client.global.nomad,IP:%s,IP:127.0.0.1\n' \
     "$NODE_IP" > /tmp/nomad-node-san.cnf
 
-  # Подписываем 10 лет; CA-key через process substitution — на ФС не пишется.
+  # CA-ключ пишется в /dev/shm (tmpfs, RAM) — на постоянный диск не попадает.
+  # OpenSSL 3.x не поддерживает чтение ключей через process substitution (/dev/fd/N).
+  local ca_key_tmp
+  ca_key_tmp=$(mktemp -p /dev/shm)
+  chmod 600 "$ca_key_tmp"
+  printf '%s\n' "$NOMAD_CA_KEY" > "$ca_key_tmp"
+
   openssl x509 -req \
     -in /tmp/nomad-node.csr \
     -CA "$NOMAD_CONF_DIR/ca.crt" \
-    -CAkey <(printf '%s\n' "$NOMAD_CA_KEY") \
+    -CAkey "$ca_key_tmp" \
     -CAcreateserial \
     -out "$NOMAD_CONF_DIR/node.crt" \
     -days 3650 \
-    -extfile /tmp/nomad-node-san.cnf #2>/dev/null
+    -extfile /tmp/nomad-node-san.cnf 2>/dev/null
 
   chmod 644 "$NOMAD_CONF_DIR/node.crt"
-  rm -f /tmp/nomad-node.csr /tmp/nomad-node-san.cnf /tmp/nomad-ca.srl
+  rm -f /tmp/nomad-node.csr /tmp/nomad-node-san.cnf /tmp/nomad-ca.srl "$ca_key_tmp"
 
   chown nomad:nomad "$NOMAD_CONF_DIR/ca.crt" "$NOMAD_CONF_DIR/node.crt" "$NOMAD_CONF_DIR/node.key"
 
@@ -458,10 +461,6 @@ generate_nats_certs() {
   openssl x509 -noout -in "$NATS_CONF_DIR/ca.crt" 2>/dev/null \
     || die "NATS_CA_CERT: невалидный сертификат — убедитесь что секрет задан как base64 (base64 -w0 < nats-ca.crt)"
 
-  # CA key используется только при подписи node.crt ниже — передаём через
-  # process substitution (<(...)), чтобы ключ ни на один момент не попадал
-  # на ФС. См. openssl x509 -CAkey ниже.
-
   # Ключ ноды: ECDSA P-256 — NIST-current, защита до 2050+, ~3× быстрее
   # TLS-handshake чем RSA-2048. Алгоритм node-key независим от алгоритма CA-key
   # (NATS_CA_KEY приходит из env, не трогаем).
@@ -478,14 +477,17 @@ generate_nats_certs() {
   # SAN: IP ноды + localhost (для локальных health-check'ов)
   printf 'subjectAltName=IP:%s,IP:127.0.0.1\n' "$NODE_IP" > /tmp/nats-node-san.cnf
 
-  # Подписываем сертификат ноды CA-ключом (10 лет).
-  # CA-ключ передаём через bash process substitution: openssl получает путь
-  # вида /dev/fd/N, ключ живёт только в памяти bash-процесса и пайпе, на
-  # диск не пишется ни на один момент.
+  # CA-ключ пишется в /dev/shm (tmpfs, RAM) — на постоянный диск не попадает.
+  # OpenSSL 3.x не поддерживает чтение ключей через process substitution (/dev/fd/N).
+  local ca_key_tmp
+  ca_key_tmp=$(mktemp -p /dev/shm)
+  chmod 600 "$ca_key_tmp"
+  printf '%s\n' "$NATS_CA_KEY" > "$ca_key_tmp"
+
   openssl x509 -req \
     -in /tmp/nats-node.csr \
     -CA "$NATS_CONF_DIR/ca.crt" \
-    -CAkey <(printf '%s\n' "$NATS_CA_KEY") \
+    -CAkey "$ca_key_tmp" \
     -CAcreateserial \
     -out "$NATS_CONF_DIR/node.crt" \
     -days 3650 \
@@ -494,9 +496,8 @@ generate_nats_certs() {
 
   chmod 644 "$NATS_CONF_DIR/node.crt"
 
-  # Промежуточные файлы (CSR, SAN-конфиг, CA-serial). CA-ключ на диск не
-  # писался — см. process substitution выше.
-  rm -f /tmp/nats-node.csr /tmp/nats-node-san.cnf /tmp/nats-ca.srl
+  # Промежуточные файлы (CSR, SAN-конфиг, CA-serial) + временный CA-ключ из /dev/shm.
+  rm -f /tmp/nats-node.csr /tmp/nats-node-san.cnf /tmp/nats-ca.srl "$ca_key_tmp"
 
   chown nats:nats "$NATS_CONF_DIR/ca.crt" "$NATS_CONF_DIR/node.crt" "$NATS_CONF_DIR/node.key"
 
