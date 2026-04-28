@@ -447,6 +447,7 @@ generate_nats_certs() {
   log "Генерация TLS-сертификатов NATS..."
 
   command -v openssl >/dev/null || apt-get install -y -q --no-install-recommends openssl
+  mkdir -p "$NATS_CONF_DIR"
 
   # CA cert — публичный, нужен для проверки сертификатов других нод
   printf '%s\n' "$NATS_CA_CERT" > "$NATS_CONF_DIR/ca.crt"
