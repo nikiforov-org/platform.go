@@ -521,7 +521,7 @@ port: 4222
 # Defense-in-depth: bind на 127.0.0.1 — первичный слой; UFW — вторичный.
 http: "127.0.0.1:8222"
 
-server_name: \$HOSTNAME
+server_name: $HOSTNAME
 
 cluster {
   name: "platform"
@@ -531,7 +531,7 @@ cluster {
   # Добавление новой ноды = новая A-запись, без правки конфига.
   routes: ["nats-route://$PLATFORM_DOMAIN:6222"]
 
-  cluster_advertise: \$NODE_IP
+  cluster_advertise: $NODE_IP
 
   # mTLS для кластерного трафика между нодами (разные DC/провайдеры).
   # CA-ключ не хранится на сервере — только cert + key ноды.
@@ -555,8 +555,8 @@ jetstream {
 }
 
 authorization {
-  user:     \$NATS_CLUSTER_USER
-  password: \$NATS_CLUSTER_PASSWORD
+  user:     ${NATS_USER}
+  password: ${NATS_PASSWORD}
 }
 CONF
 
