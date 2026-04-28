@@ -402,14 +402,13 @@ generate_nomad_certs() {
   chmod 644 "$NOMAD_CONF_DIR/ca.crt"
 
   # ECDSA P-256 — соответствует выбору для NATS-cert.
-  openssl ecparam -name prime256v1 -genkey -noout -out "$NOMAD_CONF_DIR/node.key" 2>/dev/null
+  openssl ecparam -name prime256v1 -genkey -noout -out "$NOMAD_CONF_DIR/node.key" #2>/dev/null
   chmod 600 "$NOMAD_CONF_DIR/node.key"
 
   openssl req -new \
     -key "$NOMAD_CONF_DIR/node.key" \
     -out /tmp/nomad-node.csr \
-    -subj "/CN=server.global.nomad/O=platform" \
-    2>/dev/null
+    -subj "/CN=server.global.nomad/O=platform" #2>/dev/null
 
   printf 'subjectAltName=DNS:server.global.nomad,DNS:client.global.nomad,IP:%s,IP:127.0.0.1\n' \
     "$NODE_IP" > /tmp/nomad-node-san.cnf
@@ -422,8 +421,7 @@ generate_nomad_certs() {
     -CAcreateserial \
     -out "$NOMAD_CONF_DIR/node.crt" \
     -days 3650 \
-    -extfile /tmp/nomad-node-san.cnf \
-    2>/dev/null
+    -extfile /tmp/nomad-node-san.cnf #2>/dev/null
 
   chmod 644 "$NOMAD_CONF_DIR/node.crt"
   rm -f /tmp/nomad-node.csr /tmp/nomad-node-san.cnf /tmp/nomad-ca.srl
