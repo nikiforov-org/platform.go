@@ -514,7 +514,7 @@ setup_nats() {
 
   # Конфиг (одинаковый для всех нод).
   # $PLATFORM_DOMAIN и остальные переменные раскрываются NATS'ом из env при старте.
-  cat > "$NATS_CONF_DIR/nats.conf" << 'CONF'
+  cat > "$NATS_CONF_DIR/nats.conf" << CONF
 port: 4222
 
 # Мониторинг — loopback-only (внешний доступ через SSH-tunnel).
