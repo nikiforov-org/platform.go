@@ -94,9 +94,11 @@ jobs:
           NOMAD_GOSSIP_KEY: ${{ secrets.NOMAD_GOSSIP_KEY }}
           NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
           PLATFORM_DOMAIN: ${{ inputs.platform_domain }}
+          NODE_IP: ${{ inputs.node_ip }}
           REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
           cat > /tmp/setup_env << EOF
+          NODE_IP="${NODE_IP}"
           PLATFORM_DOMAIN="${PLATFORM_DOMAIN}"
           NATS_USER="${NATS_USER}"
           NATS_PASSWORD="${NATS_PASSWORD}"

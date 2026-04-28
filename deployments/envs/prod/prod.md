@@ -32,35 +32,23 @@ Ubuntu 22.04 или 24.04. SSH-ключ из GitHub Secret `DEPLOY_SSH_KEY` до
 
 Одновременно можно добавить A-запись публичного домена (для балансировки — см. раздел ниже).
 
-### 3. Запустить одну команду на сервере
+### 3. Запустить workflow
 
-```bash
-wget -qO- https://raw.githubusercontent.com/OWNER/REPO/main/deployments/envs/prod/setup.sh \
-  | PLATFORM_DOMAIN=nodes.example.com \
-    NATS_USER=nats \
-    NATS_PASSWORD=secret \
-    NATS_CA_KEY="$(cat nats-ca.key)" \
-    NATS_CA_CERT="$(cat nats-ca.crt)" \
-    NOMAD_CA_KEY="$(cat nomad-ca.key)" \
-    NOMAD_CA_CERT="$(cat nomad-ca.crt)" \
-    NOMAD_GOSSIP_KEY="$(openssl rand -base64 32)" \
-    NOMAD_TOKEN=$(uuidgen) \
-    bash
+```
+Actions → Setup VPS → Run workflow
 ```
 
-`NOMAD_GOSSIP_KEY` и `NOMAD_TOKEN` достаточно сгенерировать один раз и
-переиспользовать для всех нод кластера (см. «Первоначальная настройка
-секретов» ниже). Альтернатива — запуск через `setup.yml`-workflow с
-GitHub Secrets, см. ниже.
+Поля: `node_ip` (публичный IP ноды), `platform_domain`, `host_fingerprint` (опционально — SHA256-fingerprint host key; пусто = TOFU).
+Все секреты берутся из GitHub Secrets автоматически.
 
-Скрипт (~2-3 мин):
+Workflow (~2-3 мин):
 - Настраивает оптимальный swap (2×RAM, ≤10% диска, ≤4 GB)
 - Устанавливает Nomad и NATS
 - Создаёт systemd-сервисы с credentials в `/etc/nats/env`, `/etc/nomad/env` (chmod 600)
 - Настраивает ufw
 - Запускает сервисы
 
-**После запуска скрипта нода автоматически находит остальные ноды через DNS
+**После завершения нода автоматически находит остальные ноды через DNS
 и входит в кластер — неважно, первая ли это нода или двадцать первая.**
 
 > **Важно: первичное развёртывание нескольких нод одновременно**
@@ -76,15 +64,8 @@ GitHub Secrets, см. ниже.
 > окне, может быть потеряна.
 >
 > **Правило при создании кластера с нуля:** ноды поднимать **последовательно**.
-> После запуска `setup.sh` на первой ноде дождаться:
->
-> ```bash
-> nomad server members      # Status=alive
-> nomad operator raft list-peers   # должен быть один peer, Voter=true
-> ```
->
-> Только после этого запускать `setup.sh` на следующей ноде. Когда кластер
-> уже работает — порядок добавления не важен.
+> Дождаться завершения workflow первой ноды, только потом запускать для следующей.
+> Когда кластер уже работает — порядок добавления не важен.
 
 ---
 
@@ -482,19 +463,6 @@ uuidgen  # → NOMAD_TOKEN
 ```
 
 > Значения секретов могут содержать любые символы — ограничений нет.
-
----
-
-### Настройка ноды через GitHub Actions (альтернатива)
-
-Вместо ручного запуска `setup.sh` можно использовать `setup.yml`:
-
-```
-Actions → Setup VPS → Run workflow
-```
-
-Поля: `node_ip` (публичный IP ноды), `platform_domain`, `host_fingerprint` (опционально — SHA256-fingerprint host key, см. I-H5; пусто = TOFU).
-Все секреты берутся из GitHub Secrets — ничего вводить вручную не нужно.
 
 ---
 

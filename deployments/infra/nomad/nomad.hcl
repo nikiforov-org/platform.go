@@ -29,8 +29,8 @@ addresses {
 
 advertise {
   http = "${attr.unique.network.ip-address}"
-  rpc  = "${attr.unique.network.ip-address}"
-  serf = "${attr.unique.network.ip-address}"
+  rpc  = "${NODE_IP}"
+  serf = "${NODE_IP}"
 }
 
 server {

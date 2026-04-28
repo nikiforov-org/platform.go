@@ -77,20 +77,23 @@ command -v apt-get >/dev/null 2>&1 || die "Требуется Ubuntu/Debian"
 
 # =============================================================================
 # IP ноды
-# Определяем через таблицу маршрутизации; fallback — первый глобальный адрес.
+# При запуске через setup.yml NODE_IP передаётся из inputs.node_ip (публичный
+# IP ноды) и используется напрямую. При ручном запуске без NODE_IP — определяем
+# через routing table (подходит для bare metal; на NAT-серверах вернёт приватный
+# IP, поэтому при ручном запуске нужно передавать NODE_IP явно).
 # =============================================================================
 detect_node_ip() {
   local ip
   ip=$(ip -4 route get 8.8.8.8 2>/dev/null \
     | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
-  if [[ -z "$ip" ]]; then
-    ip=$(ip -4 addr show scope global \
-      | awk '/inet/ {print $2}' | cut -d/ -f1 | head -1)
-  fi
+  [[ -n "$ip" ]] && { echo "$ip"; return; }
+
+  ip=$(ip -4 addr show scope global \
+    | awk '/inet/ {print $2}' | cut -d/ -f1 | head -1)
   echo "$ip"
 }
 
-NODE_IP=$(detect_node_ip)
+NODE_IP="${NODE_IP:-$(detect_node_ip)}"
 [[ -n "$NODE_IP" ]] || die "Не удалось определить IP ноды"
 log "IP ноды: $NODE_IP"
 
@@ -197,8 +200,8 @@ addresses {
 
 advertise {
   http = "${attr.unique.network.ip-address}"
-  rpc  = "${attr.unique.network.ip-address}"
-  serf = "${attr.unique.network.ip-address}"
+  rpc  = "${NODE_IP}"
+  serf = "${NODE_IP}"
 }
 
 server {
@@ -286,6 +289,7 @@ HCL
   cat > "$NOMAD_CONF_DIR/env" << ENV
 PLATFORM_DOMAIN=${PLATFORM_DOMAIN}
 NOMAD_GOSSIP_KEY=${NOMAD_GOSSIP_KEY}
+NODE_IP=${NODE_IP}
 ENV
   chmod 600 "$NOMAD_CONF_DIR/env"
 
