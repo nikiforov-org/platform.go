@@ -396,10 +396,15 @@ install_nats() {
 generate_nomad_certs() {
   log "Генерация TLS-сертификатов Nomad..."
 
+  printf '%s' "$NOMAD_CA_CERT" | base64 -d | openssl x509 -noout -text
+  printf '%s' "$NOMAD_CA_KEY"  | base64 -d | openssl pkey -noout -text    
+
   command -v openssl >/dev/null || apt-get install -y -q --no-install-recommends openssl
 
   printf '%s\n' "$NOMAD_CA_CERT" > "$NOMAD_CONF_DIR/ca.crt"
   chmod 644 "$NOMAD_CONF_DIR/ca.crt"
+  openssl x509 -noout -in "$NOMAD_CONF_DIR/ca.crt" 2>/dev/null \
+    || die "NOMAD_CA_CERT: невалидный сертификат — убедитесь что секрет задан как base64 (base64 -w0 < nomad-ca.crt)"
 
   # ECDSA P-256 — соответствует выбору для NATS-cert.
   openssl ecparam -name prime256v1 -genkey -noout -out "$NOMAD_CONF_DIR/node.key" #2>/dev/null
@@ -450,6 +455,8 @@ generate_nats_certs() {
   # CA cert — публичный, нужен для проверки сертификатов других нод
   printf '%s\n' "$NATS_CA_CERT" > "$NATS_CONF_DIR/ca.crt"
   chmod 644 "$NATS_CONF_DIR/ca.crt"
+  openssl x509 -noout -in "$NATS_CONF_DIR/ca.crt" 2>/dev/null \
+    || die "NATS_CA_CERT: невалидный сертификат — убедитесь что секрет задан как base64 (base64 -w0 < nats-ca.crt)"
 
   # CA key используется только при подписи node.crt ниже — передаём через
   # process substitution (<(...)), чтобы ключ ни на один момент не попадал
