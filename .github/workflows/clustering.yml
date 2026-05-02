@@ -131,21 +131,21 @@ jobs:
             echo "▶ Настройка кластера на $NODE..."
 
             # Создать cluster.conf локально
-            cat > /tmp/cluster.conf <<'CONFEOF'
-cluster {
-  name: "platform"
-  port: 6222
-  routes: ["nats-route://nodes.PLATFORM_DOMAIN_PLACEHOLDER:6222"]
-  cluster_advertise: NODE_PLACEHOLDER
-  tls {
-    cert_file: "/etc/nats/node.crt"
-    key_file:  "/etc/nats/node.key"
-    ca_file:   "/etc/nats/ca.crt"
-    verify:    true
-    timeout:   5
-  }
-}
-CONFEOF
+            cat > /tmp/cluster.conf << 'CONFEOF'
+          cluster {
+            name: "platform"
+            port: 6222
+            routes: ["nats-route://nodes.PLATFORM_DOMAIN_PLACEHOLDER:6222"]
+            cluster_advertise: NODE_PLACEHOLDER
+            tls {
+              cert_file: "/etc/nats/node.crt"
+              key_file:  "/etc/nats/node.key"
+              ca_file:   "/etc/nats/ca.crt"
+              verify:    true
+              timeout:   5
+            }
+          }
+          CONFEOF
 
             # Подставить переменные
             sed -i "s|PLATFORM_DOMAIN_PLACEHOLDER|$PLATFORM_DOMAIN|g" /tmp/cluster.conf
