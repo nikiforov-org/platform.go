@@ -409,8 +409,12 @@ generate_nomad_certs() {
     -out /tmp/nomad-node.csr \
     -subj "/CN=server.global.nomad/O=platform" #2>/dev/null
 
-  printf 'subjectAltName=DNS:server.global.nomad,DNS:client.global.nomad,IP:%s,IP:127.0.0.1\n' \
-    "$NODE_IP" > /tmp/nomad-node-san.cnf
+  # SAN: Nomad server/client DNS-имена + localhost (для локальных API-запросов).
+  # verify_server_hostname=true проверяет server.global.nomad при RPC-соединениях.
+  # IP ноды НЕ включается — в multi-DC каждая нода имеет свой IP, но все используют
+  # единые DNS-имена; сертификат идентичен на всех нодах.
+  printf 'subjectAltName=DNS:server.global.nomad,DNS:client.global.nomad,IP:127.0.0.1\n' \
+    > /tmp/nomad-node-san.cnf
 
   # CA-ключ пишется в /dev/shm (tmpfs, RAM) — на постоянный диск не попадает.
   # OpenSSL 3.x не поддерживает чтение ключей через process substitution (/dev/fd/N).
@@ -473,11 +477,11 @@ generate_nats_certs() {
     -subj "/CN=nats-${NODE_IP}/O=platform" \
     2>/dev/null
 
-  # SAN: IP ноды + localhost (для локальных health-check'ов) + DNS discovery domain.
-  # DNS-имя PLATFORM_DOMAIN резолвится в A-записи всех нод кластера (DNS-based routes discovery).
+  # SAN: DNS discovery domain + localhost (для локальных health-check'ов).
   # NATS в cluster.routes использует nats-route://nodes.up.mt:6222 — при TLS handshake проверяет,
-  # что сертификат содержит DNS:nodes.up.mt в SAN.
-  printf 'subjectAltName=DNS:%s,IP:%s,IP:127.0.0.1\n' "$PLATFORM_DOMAIN" "$NODE_IP" > /tmp/nats-node-san.cnf
+  # что сертификат содержит DNS:nodes.up.mt в SAN. IP ноды НЕ включается — в multi-DC каждая нода
+  # имеет свой IP, но все подключаются через единый DNS-домен; сертификат идентичен на всех нодах.
+  printf 'subjectAltName=DNS:%s,IP:127.0.0.1\n' "$PLATFORM_DOMAIN" > /tmp/nats-node-san.cnf
 
   # CA-ключ пишется в /dev/shm (tmpfs, RAM) — на постоянный диск не попадает.
   # OpenSSL 3.x не поддерживает чтение ключей через process substitution (/dev/fd/N).
