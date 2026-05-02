@@ -177,13 +177,14 @@ setup_nomad() {
   chown nomad:nomad "$NOMAD_DATA_DIR"
 
   # Конфиг (одинаковый для всех нод).
-  # ${PLATFORM_DOMAIN} раскрывается Nomad'ом из переменных окружения при старте.
+  # $PLATFORM_DOMAIN раскрывается Nomad'ом из переменных окружения при старте.
+  # $NODE_IP (bash) подставляется здесь для advertise rpc/serf.
   # bootstrap_expect = 1: нода сразу готова к работе без ожидания кворума.
   # При наличии других нод в DNS — автоматически входит в существующий кластер.
   # ВНИМАНИЕ: первичное развёртывание 2+ нод параллельно — окно риска split-brain
   # (DNS не пропагирован, каждая бутстрапится как самостоятельный лидер).
   # Ноды первого кластера поднимать последовательно — см. prod.md «Важно».
-  cat > "$NOMAD_CONF_DIR/nomad.hcl" << 'HCL'
+  cat > "$NOMAD_CONF_DIR/nomad.hcl" << HCL
 data_dir  = "/var/lib/nomad"
 log_level = "INFO"
 log_json  = true
@@ -199,9 +200,9 @@ addresses {
 }
 
 advertise {
-  http = "${attr.unique.network.ip-address}"
-  rpc  = "${NODE_IP}"
-  serf = "${NODE_IP}"
+  http = "\${attr.unique.network.ip-address}"
+  rpc  = "$NODE_IP"
+  serf = "$NODE_IP"
 }
 
 server {
@@ -229,7 +230,7 @@ server {
 # Автоматическое обнаружение кластера через DNS.
 # Все ноды добавляют свой IP в A-записи PLATFORM_DOMAIN — Nomad находит их здесь.
 server_join {
-  retry_join     = ["${PLATFORM_DOMAIN}"]
+  retry_join     = ["$PLATFORM_DOMAIN"]
   retry_max      = 0
   retry_interval = "15s"
 }

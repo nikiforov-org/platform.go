@@ -3,10 +3,13 @@
 # Конфигурация Nomad-агента в гибридном режиме (server + client).
 # Один файл для всех нод.
 #
-# Переменные окружения (задаются в /etc/nomad/env, раскрываются Nomad при старте):
-#   PLATFORM_DOMAIN  — домен A-записей кластера (все ноды)
-#   NOMAD_GOSSIP_KEY — 32-байтный gossip-key в base64 для шифрования Serf (4648).
-#                       Одинаковый для всех нод; см. server.encrypt ниже.
+# ВАЖНО: Этот файл — канонический шаблон. Реальный конфиг генерируется в setup.sh.
+# При правке здесь — синхронизировать с HEREDOC в setup.sh (см. feedback memory).
+#
+# Переменные:
+#   PLATFORM_DOMAIN  — раскрывается Nomad'ом из /etc/nomad/env при старте (retry_join)
+#   NODE_IP          — подставляется bash'ом из $NODE_IP при генерации конфига (advertise rpc/serf)
+#   NOMAD_GOSSIP_KEY — раскрывается systemd из /etc/nomad/env через CLI-флаг -encrypt (server.encrypt не поддерживает env)
 #
 # bootstrap_expect = 1: нода сразу готова к работе.
 # server_join retry_join: при наличии других нод в DNS автоматически входит

@@ -138,3 +138,23 @@ curl -s http://127.0.0.1:8222/varz | jq .cluster.num_routes
 # Логи workflow:
 # GitHub → Actions → NATS Clustering → последний запуск → View logs
 ```
+
+## Дополнительный фикс: Nomad advertise
+
+**Проблема:** При миграции NATS на standalone обнаружилось что Nomad не может раскрыть `${NODE_IP}` из env-файла в HCL-конфиге (Nomad не поддерживает env-интерполяцию в advertise).
+
+**Решение:** Изменён HEREDOC в setup.sh с `<< 'HCL'` на `<< HCL` (без кавычек), чтобы bash подставлял реальные значения `$NODE_IP` и `$PLATFORM_DOMAIN` при генерации конфига.
+
+**Изменённые файлы:**
+- `deployments/envs/prod/setup.sh` — HEREDOC без кавычек, экранирован `\${attr.unique.network.ip-address}`
+- `deployments/infra/nomad/nomad.hcl` — обновлены комментарии о генерации конфига
+
+**Проверка:**
+```bash
+# На ноде:
+curl http://127.0.0.1:4646/v1/status/leader
+# Ожидается: "IP_НОДЫ:4647"
+
+systemctl is-active nomad
+# Ожидается: active
+```
