@@ -180,7 +180,7 @@ Key Nomad behaviors:
 - `ReconnectConfig.MaxAttempts = -1` (infinite reconnect) — Nomad handles process lifecycle, not the app
 - x-сервисы разворачиваются в `count = min(NODES, 3)` копий с `distinct_hosts` — при 1-2 нодах по копии на каждую, при 3+ ровно 3 копии. `NODES` (число ready-нод) вычисляется на prod-сервере через Nomad API `/v1/nodes` в момент `nomad job run` — CI об этом числе не знает. Gateway `type = "system"` — копия на каждой ноде по построению.
 
-NATS cluster (production) uses DNS-based route discovery via `deployments/infra/nats/nats.conf`. Services connect to local NATS on `127.0.0.1:4222`.
+**NATS clustering:** `setup.sh` installs nodes in standalone mode — JetStream works immediately. GitHub Actions workflow (`clustering.yml`) manages cluster formation automatically when 2+ nodes exist in DNS. When adding a node: run `setup.sh` (node starts standalone) → push to `main` or manually trigger `clustering.yml` → workflow detects all nodes, creates `/etc/nats/cluster.conf`, does `systemctl reload nats` → cluster formed. Services connect to local NATS on `127.0.0.1:4222`.
 
 **Any binary as a service:** Nomad's `raw_exec` driver runs any static Linux binary — Go, Rust, or any language with static linking. The binary connects to local NATS on `127.0.0.1:4222`, subscribes to subjects, and becomes a full platform participant. It does not have to be built by this repo's CI — any URL with a checksum in the `artifact {}` block works. Docker is not required and not installed.
 
@@ -193,17 +193,4 @@ Nomad configs: `deployments/infra/nomad/nomad.hcl` (agent), `deployments/infra/n
 Dev mode: `deployments/envs/dev/` — Docker Compose для NATS/PostgreSQL, `dev.vars` для переменных, инструкции в `dev.md`.
 Prod mode: `deployments/envs/prod/` — шаблон `prod.vars.example`, инструкции в `prod.md`.
 
-Firewall ports required between nodes: 4222/TCP (NATS client), 6222/TCP (NATS cluster), 4646/TCP (Nomad HTTP API), 4647–4648/TCP+UDP (Nomad RPC/Serf).
-
-claude --resume a3569c25-d71b-4a45-9ee4-11ae7412b0b9
-
-Напоминаю, что при запуске setup.sh сервисы падают: 
-```
-Firewall is active and enabled on system start***                                         
-Firewall настроен                                                                                                                          
-▶ Запуск сервисов...                                                                                                                         
-▶ Ожидание готовности NATS (JetStream recovery)...                                                                                           
-✗ NATS /healthz не отвечает за 60s                                                                                                           
-Error: Process completed with exit code 1. 
-```
-Залезь на сервер и посмотри в чём дело. claude@3.64.192.171, пароль claude! 
+Firewall ports required between nodes: 4222/TCP (NATS client), 6222/TCP (NATS cluster), 4646/TCP (Nomad HTTP API), 4647–4648/TCP+UDP (Nomad RPC/Serf). 

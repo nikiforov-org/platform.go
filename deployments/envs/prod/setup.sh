@@ -519,7 +519,10 @@ setup_nats() {
   mkdir -p "$NATS_DATA_DIR/jetstream" "$NATS_CONF_DIR"
   chown -R nats:nats "$NATS_DATA_DIR"
 
-  # Конфиг (одинаковый для всех нод).
+  # Конфиг NATS для standalone-режима.
+  # NATS запускается без кластеризации — JetStream работает сразу.
+  # Кластеризация настраивается через GitHub Actions workflow (clustering.yml)
+  # после добавления 2+ нод в DNS.
   # $PLATFORM_DOMAIN и остальные переменные раскрываются NATS'ом из env при старте.
   cat > "$NATS_CONF_DIR/nats.conf" << CONF
 port: 4222
@@ -529,31 +532,6 @@ port: 4222
 http: "127.0.0.1:8222"
 
 server_name: $HOSTNAME
-
-cluster {
-  name: "platform"
-  port: 6222
-
-  # DNS Discovery: NATS резолвит все A-записи домена и строит полную mesh-сеть.
-  # Добавление новой ноды = новая A-запись, без правки конфига.
-  routes: ["nats-route://$PLATFORM_DOMAIN:6222"]
-
-  cluster_advertise: $NODE_IP
-
-  # mTLS для кластерного трафика между нодами (разные DC/провайдеры).
-  # CA-ключ не хранится на сервере — только cert + key ноды.
-  tls {
-    cert_file: "/etc/nats/node.crt"
-    key_file:  "/etc/nats/node.key"
-    ca_file:   "/etc/nats/ca.crt"
-    verify:    true
-    timeout:   5
-  }
-
-  # cluster.authorization { user/password } сознательно не используется:
-  # cluster trust полностью основан на mTLS (verify=true) + off-server CA-key.
-  # Подробнее о threat model — prod.md → «Безопасность кластера NATS».
-}
 
 jetstream {
   store_dir: "/var/lib/nats/jetstream"

@@ -1,0 +1,211 @@
+name: NATS Clustering
+
+on:
+  # Автоматически после успешного деплоя
+  workflow_run:
+    workflows: ["CI/CD"]
+    types: [completed]
+    branches: [main]
+
+  # Ручной запуск
+  workflow_dispatch:
+
+jobs:
+  sync-cluster:
+    name: Sync NATS Cluster Config
+    runs-on: ubuntu-latest
+    # Запускается только если предыдущий workflow успешен (для workflow_run)
+    # или всегда для workflow_dispatch
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          # Добавить fingerprints всех известных хостов
+          if [[ -n "${{ secrets.HOST_FINGERPRINTS }}" ]]; then
+            echo "${{ secrets.HOST_FINGERPRINTS }}" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Get cluster nodes from DNS
+        id: nodes
+        run: |
+          NODES=$(dig +short nodes.${{ secrets.PLATFORM_DOMAIN }} | sort)
+          NODE_COUNT=$(echo "$NODES" | grep -v '^$' | wc -l)
+
+          echo "nodes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NODES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "count=$NODE_COUNT" >> $GITHUB_OUTPUT
+
+          echo "▶ Обнаружено нод в DNS: $NODE_COUNT"
+          echo "$NODES"
+
+      - name: Exit if single node
+        if: steps.nodes.outputs.count == '1'
+        run: |
+          NODE=$(echo "${{ steps.nodes.outputs.nodes }}" | head -1)
+          echo "▶ Одна нода ($NODE) — проверяем состояние"
+
+          # Проверить есть ли cluster.conf (осталась от кластера)
+          if ssh -o ConnectTimeout=10 root@$NODE "test -f /etc/nats/cluster.conf"; then
+            echo "✓ /etc/nats/cluster.conf существует — нода продолжит работать в кластерном режиме (кворум 1/1)"
+          else
+            echo "✓ /etc/nats/cluster.conf не существует — нода работает в standalone-режиме"
+          fi
+
+          echo "▶ Кластеризация не требуется"
+          exit 0
+
+      - name: Check cluster state
+        id: state
+        if: steps.nodes.outputs.count >= '2'
+        run: |
+          NODES="${{ steps.nodes.outputs.nodes }}"
+
+          WITH_CONF=0
+          WITHOUT_CONF=0
+
+          for NODE in $NODES; do
+            echo "▶ Проверка $NODE..."
+
+            if ! ssh -o ConnectTimeout=10 root@$NODE "echo ok" >/dev/null 2>&1; then
+              echo "✗ SSH недоступен на $NODE"
+              exit 1
+            fi
+
+            if ssh root@$NODE "test -f /etc/nats/cluster.conf"; then
+              echo "  ✓ cluster.conf существует"
+              WITH_CONF=$((WITH_CONF + 1))
+            else
+              echo "  • cluster.conf не существует"
+              WITHOUT_CONF=$((WITHOUT_CONF + 1))
+            fi
+          done
+
+          echo "with_conf=$WITH_CONF" >> $GITHUB_OUTPUT
+          echo "without_conf=$WITHOUT_CONF" >> $GITHUB_OUTPUT
+
+          if [ $WITHOUT_CONF -eq 0 ]; then
+            echo "scenario=all_configured" >> $GITHUB_OUTPUT
+            echo "▶ Все ноды уже в кластере"
+          elif [ $WITH_CONF -eq 0 ]; then
+            echo "scenario=first_clustering" >> $GITHUB_OUTPUT
+            echo "▶ Первая кластеризация (все ноды standalone)"
+          else
+            echo "scenario=add_new_nodes" >> $GITHUB_OUTPUT
+            echo "▶ Добавление новых нод в существующий кластер"
+          fi
+
+      - name: Exit if already clustered
+        if: steps.state.outputs.scenario == 'all_configured'
+        run: |
+          echo "✓ Кластер уже настроен, ничего не делаем"
+          exit 0
+
+      - name: Configure cluster
+        if: steps.state.outputs.scenario == 'first_clustering' || steps.state.outputs.scenario == 'add_new_nodes'
+        run: |
+          NODES="${{ steps.nodes.outputs.nodes }}"
+          SCENARIO="${{ steps.state.outputs.scenario }}"
+          PLATFORM_DOMAIN="${{ secrets.PLATFORM_DOMAIN }}"
+
+          echo "▶ Сценарий: $SCENARIO"
+
+          for NODE in $NODES; do
+            # Пропустить ноды с существующим cluster.conf при сценарии добавления
+            if [ "$SCENARIO" = "add_new_nodes" ]; then
+              if ssh root@$NODE "test -f /etc/nats/cluster.conf"; then
+                echo "  ⏩ $NODE уже настроена, пропускаем"
+                continue
+              fi
+            fi
+
+            echo "▶ Настройка кластера на $NODE..."
+
+            # Создать cluster.conf
+            ssh root@$NODE "cat > /etc/nats/cluster.conf" <<EOF
+cluster {
+  name: "platform"
+  port: 6222
+  routes: ["nats-route://nodes.$PLATFORM_DOMAIN:6222"]
+  cluster_advertise: $NODE
+  tls {
+    cert_file: "/etc/nats/node.crt"
+    key_file:  "/etc/nats/node.key"
+    ca_file:   "/etc/nats/ca.crt"
+    verify:    true
+    timeout:   5
+  }
+}
+EOF
+
+            # Добавить include в конец nats.conf если его ещё нет
+            if ! ssh root@$NODE "grep -q 'include.*cluster.conf' /etc/nats/nats.conf"; then
+              ssh root@$NODE "echo 'include \"cluster.conf\"' >> /etc/nats/nats.conf"
+            fi
+
+            # Graceful reload
+            ssh root@$NODE "systemctl reload nats"
+
+            echo "  ✓ $NODE настроена"
+          done
+
+          echo "▶ Ожидание стабилизации кластера (10s)..."
+          sleep 10
+
+      - name: Verify cluster
+        if: steps.nodes.outputs.count >= '2' && steps.state.outputs.scenario != 'all_configured'
+        run: |
+          NODES="${{ steps.nodes.outputs.nodes }}"
+          NODE_COUNT=${{ steps.nodes.outputs.count }}
+          EXPECTED_ROUTES=$((NODE_COUNT - 1))
+
+          echo "▶ Проверка кластера (ожидаем $EXPECTED_ROUTES routes на каждой ноде)..."
+
+          ALL_OK=true
+
+          for NODE in $NODES; do
+            echo "▶ Проверка $NODE..."
+
+            # Healthz
+            HEALTHZ=$(ssh root@$NODE "curl -s http://127.0.0.1:8222/healthz")
+            if echo "$HEALTHZ" | grep -q '"status":"ok"'; then
+              echo "  ✓ healthz: ok"
+            else
+              echo "  ✗ healthz: $HEALTHZ"
+              ALL_OK=false
+            fi
+
+            # Cluster routes
+            NUM_ROUTES=$(ssh root@$NODE "curl -s http://127.0.0.1:8222/varz" | grep -o '"num_routes":[0-9]*' | cut -d: -f2 || echo "0")
+            if [ "$NUM_ROUTES" -eq "$EXPECTED_ROUTES" ]; then
+              echo "  ✓ cluster routes: $NUM_ROUTES/$EXPECTED_ROUTES"
+            else
+              echo "  ⚠ cluster routes: $NUM_ROUTES/$EXPECTED_ROUTES (возможно ещё соединяются)"
+              # Не fail — routes могут подключиться с задержкой
+            fi
+
+            # JetStream meta leader
+            JS_LEADER=$(ssh root@$NODE "curl -s http://127.0.0.1:8222/jsz" | grep -o '"leader":"[^"]*"' | cut -d'"' -f4 || echo "none")
+            if [ "$JS_LEADER" != "none" ] && [ -n "$JS_LEADER" ]; then
+              echo "  ✓ JetStream leader: $JS_LEADER"
+            else
+              echo "  ⚠ JetStream leader: не определён (возможно выборы ещё идут)"
+              # Не fail — leader может выбраться с задержкой
+            fi
+          done
+
+          if [ "$ALL_OK" = true ]; then
+            echo "✓ Кластер настроен успешно"
+          else
+            echo "✗ Обнаружены проблемы при проверке кластера"
+            exit 1
+          fi
