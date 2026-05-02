@@ -679,7 +679,7 @@ bootstrap_acl() {
   # Nomad принимает bootstrap-токен только один раз.
   # При повторном вызове возвращает ошибку "already bootstrapped" — игнорируем (|| true).
   local bootstrap_result
-  bootstrap_result=$(curl -sf -X POST "http://127.0.0.1:4646/v1/acl/bootstrap" \
+  bootstrap_result=$(curl -s -X POST "http://127.0.0.1:4646/v1/acl/bootstrap" \
     -d "{\"BootstrapSecret\": \"${NOMAD_TOKEN}\"}" 2>&1) || true
 
   # Проверяем токен после попытки bootstrap.
@@ -696,7 +696,7 @@ bootstrap_acl() {
   if echo "$bootstrap_result" | grep -q "already done"; then
     die "ACL уже забутстрапен с другим токеном. Используйте NOMAD_TOKEN из GitHub Secret или сбросьте Nomad: rm -rf /var/lib/nomad/* && systemctl restart nomad"
   else
-    die "Не удалось настроить Nomad ACL. Проверьте NOMAD_TOKEN или логи: journalctl -u nomad -n 50"
+    die "Не удалось настроить Nomad ACL. Bootstrap ответ: ${bootstrap_result}. Проверьте NOMAD_TOKEN или логи: journalctl -u nomad -n 50"
   fi
 }
 
