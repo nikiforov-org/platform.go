@@ -191,6 +191,7 @@ runs:
             export NOMAD_TOKEN=$Q_NOMAD_TOKEN
             ${ENV_EXPORTS}
             ${NODES_EXPORT}
+            git config --global --add safe.directory /opt/platform
             if [ -d /opt/platform/.git ]; then
               git -C /opt/platform pull
             else

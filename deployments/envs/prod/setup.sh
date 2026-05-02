@@ -144,7 +144,7 @@ install_base() {
   # меньше attack surface. Все перечисленные утилиты сохраняют функциональность
   # без recommends (curl, dig, lsb_release, ufw, gpg работают на Depends).
   apt-get install -y -q --no-install-recommends \
-    curl wget git unzip gnupg lsb-release ufw dnsutils
+    curl wget git unzip gnupg lsb-release ufw dnsutils jq
 }
 
 # =============================================================================
