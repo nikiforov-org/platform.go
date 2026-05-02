@@ -194,3 +194,16 @@ Dev mode: `deployments/envs/dev/` — Docker Compose для NATS/PostgreSQL, `de
 Prod mode: `deployments/envs/prod/` — шаблон `prod.vars.example`, инструкции в `prod.md`.
 
 Firewall ports required between nodes: 4222/TCP (NATS client), 6222/TCP (NATS cluster), 4646/TCP (Nomad HTTP API), 4647–4648/TCP+UDP (Nomad RPC/Serf).
+
+claude --resume a3569c25-d71b-4a45-9ee4-11ae7412b0b9
+
+Напоминаю, что при запуске setup.sh сервисы падают: 
+```
+Firewall is active and enabled on system start***                                         
+Firewall настроен                                                                                                                          
+▶ Запуск сервисов...                                                                                                                         
+▶ Ожидание готовности NATS (JetStream recovery)...                                                                                           
+✗ NATS /healthz не отвечает за 60s                                                                                                           
+Error: Process completed with exit code 1. 
+```
+Залезь на сервер и посмотри в чём дело. claude@3.64.192.171, пароль claude! 

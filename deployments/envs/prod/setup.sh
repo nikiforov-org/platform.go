@@ -473,8 +473,11 @@ generate_nats_certs() {
     -subj "/CN=nats-${NODE_IP}/O=platform" \
     2>/dev/null
 
-  # SAN: IP ноды + localhost (для локальных health-check'ов)
-  printf 'subjectAltName=IP:%s,IP:127.0.0.1\n' "$NODE_IP" > /tmp/nats-node-san.cnf
+  # SAN: IP ноды + localhost (для локальных health-check'ов) + DNS discovery domain.
+  # DNS-имя PLATFORM_DOMAIN резолвится в A-записи всех нод кластера (DNS-based routes discovery).
+  # NATS в cluster.routes использует nats-route://nodes.up.mt:6222 — при TLS handshake проверяет,
+  # что сертификат содержит DNS:nodes.up.mt в SAN.
+  printf 'subjectAltName=DNS:%s,IP:%s,IP:127.0.0.1\n' "$PLATFORM_DOMAIN" "$NODE_IP" > /tmp/nats-node-san.cnf
 
   # CA-ключ пишется в /dev/shm (tmpfs, RAM) — на постоянный диск не попадает.
   # OpenSSL 3.x не поддерживает чтение ключей через process substitution (/dev/fd/N).
