@@ -666,20 +666,38 @@ bootstrap_acl() {
     [[ $elapsed -lt 30 ]] || die "Nomad API не отвечает за 30s"
   done
 
-  # Отправляем bootstrap-токен. Nomad принимает его только один раз —
-  # при повторном вызове (на нодах 2+) возвращает ошибку "already bootstrapped" — игнорируем.
-  curl -sf -X POST "http://127.0.0.1:4646/v1/acl/bootstrap" \
-    -d "{\"BootstrapSecret\": \"${NOMAD_TOKEN}\"}" &>/dev/null || true
-
-  # Проверяем что токен действительно работает — независимо от результата bootstrap выше.
-  # Покрывает все сценарии: первая нода, повторный запуск, нода 2+.
-  if ! curl -sf --max-time 5 \
+  # Проверяем токен перед попыткой bootstrap.
+  # Если токен уже валиден (повторный запуск setup.sh с тем же токеном) — ничего не делаем.
+  if curl -sf --max-time 5 \
       -H "X-Nomad-Token: ${NOMAD_TOKEN}" \
-      "http://127.0.0.1:4646/v1/acl/self" &>/dev/null; then
-    die "NOMAD_TOKEN не принят Nomad ACL — проверьте что токен совпадает с GitHub Secret NOMAD_TOKEN"
+      "http://127.0.0.1:4646/v1/acl/token/self" &>/dev/null; then
+    info "ACL уже настроен, токен валиден (повторный запуск)"
+    return 0
   fi
 
-  info "ACL настроен, токен валиден"
+  # Токен невалиден — пытаемся сделать bootstrap.
+  # Nomad принимает bootstrap-токен только один раз.
+  # При повторном вызове возвращает ошибку "already bootstrapped" — игнорируем (|| true).
+  local bootstrap_result
+  bootstrap_result=$(curl -sf -X POST "http://127.0.0.1:4646/v1/acl/bootstrap" \
+    -d "{\"BootstrapSecret\": \"${NOMAD_TOKEN}\"}" 2>&1) || true
+
+  # Проверяем токен после попытки bootstrap.
+  if curl -sf --max-time 5 \
+      -H "X-Nomad-Token: ${NOMAD_TOKEN}" \
+      "http://127.0.0.1:4646/v1/acl/token/self" &>/dev/null; then
+    info "ACL настроен, токен валиден"
+    return 0
+  fi
+
+  # Токен всё ещё невалиден. Две возможные причины:
+  # 1. ACL уже забутстрапен с другим токеном (нужен правильный NOMAD_TOKEN из GitHub Secret)
+  # 2. Bootstrap не удался по другой причине
+  if echo "$bootstrap_result" | grep -q "already done"; then
+    die "ACL уже забутстрапен с другим токеном. Используйте NOMAD_TOKEN из GitHub Secret или сбросьте Nomad: rm -rf /var/lib/nomad/* && systemctl restart nomad"
+  else
+    die "Не удалось настроить Nomad ACL. Проверьте NOMAD_TOKEN или логи: journalctl -u nomad -n 50"
+  fi
 }
 
 # =============================================================================

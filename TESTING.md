@@ -158,3 +158,52 @@ curl http://127.0.0.1:4646/v1/status/leader
 systemctl is-active nomad
 # Ожидается: active
 ```
+
+## Дополнительный фикс: Nomad ACL endpoint
+
+**Проблема:** При проверке Nomad ACL токена setup.sh использовал неверный эндпоинт `/v1/acl/self`, что приводило к 404 ошибке.
+
+**Решение:** Исправлен эндпоинт на `/v1/acl/token/self` (единственное число).
+
+**Изменённые файлы:**
+- `deployments/envs/prod/setup.sh` — строка 677, исправлен путь к API
+
+**Проверка:**
+```bash
+# На ноде с валидным NOMAD_TOKEN:
+curl -s -H "X-Nomad-Token: $NOMAD_TOKEN" http://127.0.0.1:4646/v1/acl/token/self
+# Ожидается: JSON с "Name":"Bootstrap Token"
+```
+
+**Тестовый токен для 3.64.192.171:**
+```
+416e9fa0-b563-4a9b-906b-dd440139bdac
+```
+(Только для тестового сервера; в production использовать GitHub Secret NOMAD_TOKEN)
+
+## Дополнительный фикс: Защита от повторного запуска setup.sh
+
+**Проблема:** При повторном запуске setup.sh с другим NOMAD_TOKEN скрипт падал с ошибкой "NOMAD_TOKEN не принят", так как ACL уже был забутстрапен с первым токеном.
+
+**Решение:** Добавлена проверка токена **перед** попыткой bootstrap:
+
+1. **Токен валиден** (повторный запуск с тем же токеном) → skip bootstrap, успех
+2. **Токен невалиден** → попытка bootstrap:
+   - Bootstrap успешен → токен принят, успех
+   - Bootstrap вернул "already done" → понятная ошибка с инструкцией
+
+**Изменённые файлы:**
+- `deployments/envs/prod/setup.sh` — функция `bootstrap_acl()`, добавлена проверка перед bootstrap
+
+**Сообщения:**
+- Повторный запуск: `ACL уже настроен, токен валиден (повторный запуск)`
+- Неверный токен: `ACL уже забутстрапен с другим токеном. Используйте NOMAD_TOKEN из GitHub Secret или сбросьте Nomad: rm -rf /var/lib/nomad/* && systemctl restart nomad`
+
+**Проверка:**
+```bash
+# Повторный запуск с правильным токеном — должен пройти без ошибок
+NOMAD_TOKEN=416e9fa0-b563-4a9b-906b-dd440139bdac bash setup.sh
+
+# Запуск с неправильным токеном — понятное сообщение об ошибке
+NOMAD_TOKEN=wrong-token bash setup.sh
+```
