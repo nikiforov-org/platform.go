@@ -191,14 +191,14 @@ runs:
             export NOMAD_TOKEN=$Q_NOMAD_TOKEN
             ${ENV_EXPORTS}
             ${NODES_EXPORT}
-            git config --global --add safe.directory /opt/platform
+            sudo git config --system --add safe.directory /opt/platform
             if [ -d /opt/platform/.git ]; then
-              git -C /opt/platform pull
+              sudo git -C /opt/platform pull
             else
-              git clone '$REPO_URL' /opt/platform
+              sudo git clone '$REPO_URL' /opt/platform
             fi
 
-            nomad job run /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
+            sudo -E nomad job run /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
           "
 
           # Скрипт уходит на remote через SSH stdin (here-string + bash -s),
