@@ -170,12 +170,15 @@ runs:
 
           # 4 *-deploy.yml workflow триггерятся параллельно после CI и каждый
           # делает git pull в /opt/platform → race на .git/index.lock.
-          # flock на /var/lock/platform-deploy.lock серилизует и эти 4 деплоя,
-          # и любые ручные SSH-деплои с того же узла. /var/lock = /run/lock на
-          # Ubuntu (tmpfs, 1777) — нет проблем со stale lock после reboot.
-          # -w 300: таймаут 5 минут — больше длительности любого штатного деплоя.
-          # Дескриптор 9 закрывается автоматически при выходе из шелла,
-          # flock освобождается тоже автоматически.
+          # Два лока:
+          # - /var/lock/platform-git.lock — общий для git pull (держится <1s)
+          # - /var/lock/platform-nomad-${NOMAD_FILE}.lock — per-service для
+          #   nomad job run (~30s на сервис), чтобы параллельные деплои разных
+          #   .nomad файлов не стояли в очереди друг за другом.
+          # /var/lock = /run/lock на Ubuntu (tmpfs, 1777) — нет проблем со stale
+          # lock после reboot. -w 300: таймаут 5 минут на каждый лок.
+          # Дескрипторы 9/10 закрываются при выходе из шелла, flock освобождается
+          # автоматически.
           # NOMAD_VAR_NODES (если объявлена в .nomad) вычисляется на remote через
           # локальный Nomad API — считаем ready-ноды. CI не знает число нод; при
           # изменении топологии кластера следующий деплой сам подхватит новое значение.
@@ -186,18 +189,22 @@ runs:
 
           REMOTE_SCRIPT="
             set -e
-            exec 9>/var/lock/platform-deploy.lock
-            flock -w 300 -x 9 || { echo 'platform-deploy: lock busy >300s, aborting'; exit 1; }
             export NOMAD_TOKEN=$Q_NOMAD_TOKEN
             ${ENV_EXPORTS}
             ${NODES_EXPORT}
+
+            exec 9>/var/lock/platform-git.lock
+            flock -w 300 -x 9 || { echo 'platform-git: lock busy >300s, aborting'; exit 1; }
             sudo git config --system --add safe.directory /opt/platform
             if [ -d /opt/platform/.git ]; then
               sudo git -C /opt/platform pull
             else
               sudo git clone '$REPO_URL' /opt/platform
             fi
+            exec 9>&-
 
+            exec 10>/var/lock/platform-nomad-${NOMAD_FILE}.lock
+            flock -w 300 -x 10 || { echo 'platform-nomad-${NOMAD_FILE}: lock busy >300s, aborting'; exit 1; }
             sudo -E nomad job run /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
           "
 
