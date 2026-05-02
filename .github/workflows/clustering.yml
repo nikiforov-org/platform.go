@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup SSH
         run: |
@@ -130,13 +130,13 @@ jobs:
 
             echo "▶ Настройка кластера на $NODE..."
 
-            # Создать cluster.conf
-            ssh root@$NODE "cat > /etc/nats/cluster.conf" <<EOF
+            # Создать cluster.conf локально
+            cat > /tmp/cluster.conf <<'CONFEOF'
 cluster {
   name: "platform"
   port: 6222
-  routes: ["nats-route://nodes.$PLATFORM_DOMAIN:6222"]
-  cluster_advertise: $NODE
+  routes: ["nats-route://nodes.PLATFORM_DOMAIN_PLACEHOLDER:6222"]
+  cluster_advertise: NODE_PLACEHOLDER
   tls {
     cert_file: "/etc/nats/node.crt"
     key_file:  "/etc/nats/node.key"
@@ -145,7 +145,14 @@ cluster {
     timeout:   5
   }
 }
-EOF
+CONFEOF
+
+            # Подставить переменные
+            sed -i "s|PLATFORM_DOMAIN_PLACEHOLDER|$PLATFORM_DOMAIN|g" /tmp/cluster.conf
+            sed -i "s|NODE_PLACEHOLDER|$NODE|g" /tmp/cluster.conf
+
+            # Скопировать на удалённую машину
+            scp -o ConnectTimeout=10 /tmp/cluster.conf root@$NODE:/etc/nats/cluster.conf
 
             # Добавить include в конец nats.conf если его ещё нет
             if ! ssh root@$NODE "grep -q 'include.*cluster.conf' /etc/nats/nats.conf"; then

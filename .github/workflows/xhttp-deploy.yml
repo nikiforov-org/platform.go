@@ -38,10 +38,10 @@ jobs:
       CACHE_TTL:       ${{ vars.CACHE_TTL || '30s' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download checksums
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: checksums
           run-id: ${{ github.event.workflow_run.id }}
