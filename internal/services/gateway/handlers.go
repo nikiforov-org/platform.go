@@ -106,8 +106,8 @@ func (gw *Gateway) Handler() http.Handler {
 
 	root := http.NewServeMux()
 	root.HandleFunc("/health", gw.handleHealth)
-	root.Handle("/", gw.middlewareOrigin(gw.middlewareRateLimit(api)))
-	return root
+	root.Handle("/", gw.middlewareRateLimit(api))
+	return gw.middlewareOrigin(root)
 }
 
 // handleHealth отвечает на запросы проверки здоровья сервиса.
