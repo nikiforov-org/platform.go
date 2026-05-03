@@ -54,7 +54,7 @@ jobs:
       X_AUTH_REFRESH_TTL:       ${{ vars.X_AUTH_REFRESH_TTL || '168h' }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Download checksums
         uses: actions/download-artifact@v8
