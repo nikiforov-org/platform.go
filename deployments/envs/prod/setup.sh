@@ -8,29 +8,29 @@
 # Использование (wget):
 #   wget -qO- https://raw.githubusercontent.com/OWNER/REPO/main/deployments/envs/prod/setup.sh \
 #     | PLATFORM_DOMAIN=nodes.example.com \
-#       NATS_USER=nats \
-#       NATS_PASSWORD=secret \
-#       NATS_CA_KEY="$(cat nats-ca.key)" \
-#       NATS_CA_CERT="$(cat nats-ca.crt)" \
-#       NOMAD_CA_KEY="$(cat nomad-ca.key)" \
-#       NOMAD_CA_CERT="$(cat nomad-ca.crt)" \
-#       NOMAD_GOSSIP_KEY="$(openssl rand -base64 32)" \
-#       NOMAD_TOKEN=$(uuidgen) \
+#       PLATFORM_NATS_USER=nats \
+#       PLATFORM_NATS_PASSWORD=secret \
+#       PLATFORM_NATS_CA_KEY="$(cat nats-ca.key)" \
+#       PLATFORM_NATS_CA_CERT="$(cat nats-ca.crt)" \
+#       PLATFORM_NOMAD_CA_KEY="$(cat nomad-ca.key)" \
+#       PLATFORM_NOMAD_CA_CERT="$(cat nomad-ca.crt)" \
+#       PLATFORM_NOMAD_GOSSIP_KEY="$(openssl rand -base64 32)" \
+#       PLATFORM_NOMAD_TOKEN=$(uuidgen) \
 #       bash
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Обязательные переменные:
 #   PLATFORM_DOMAIN  — домен A-записей кластера (все ноды), например: nodes.example.com
-#   NATS_USER        — логин NATS-сервера
-#   NATS_PASSWORD    — пароль NATS-сервера
-#   NATS_CA_KEY      — приватный ключ CA NATS  (PEM; cat nats-ca.key)
-#   NATS_CA_CERT     — сертификат CA NATS      (PEM; cat nats-ca.crt)
-#   NOMAD_CA_KEY     — приватный ключ CA Nomad (PEM; cat nomad-ca.key)
-#   NOMAD_CA_CERT    — сертификат CA Nomad     (PEM; cat nomad-ca.crt)
-#   NOMAD_GOSSIP_KEY — gossip-key Nomad в base64 (32 байта; openssl rand -base64 32).
+#   PLATFORM_NATS_USER        — логин NATS-сервера
+#   PLATFORM_NATS_PASSWORD    — пароль NATS-сервера
+#   PLATFORM_NATS_CA_KEY      — приватный ключ CA NATS  (PEM; cat nats-ca.key)
+#   PLATFORM_NATS_CA_CERT     — сертификат CA NATS      (PEM; cat nats-ca.crt)
+#   PLATFORM_NOMAD_CA_KEY     — приватный ключ CA Nomad (PEM; cat nomad-ca.key)
+#   PLATFORM_NOMAD_CA_CERT    — сертификат CA Nomad     (PEM; cat nomad-ca.crt)
+#   PLATFORM_NOMAD_GOSSIP_KEY — gossip-key Nomad в base64 (32 байта; openssl rand -base64 32).
 #                      Шифрует Serf-протокол (4648) — у Nomad собственное
 #                      симметричное шифрование, через TLS Serf не работает.
-#   NOMAD_TOKEN      — UUID для Nomad ACL bootstrap (uuidgen)
+#   PLATFORM_NOMAD_TOKEN      — UUID для Nomad ACL bootstrap (uuidgen)
 #
 # Необязательные:
 #   NATS_VERSION     — версия NATS Server    (по умолчанию: 2.10.22)
@@ -42,14 +42,14 @@ set -euo pipefail
 # Переменные
 # =============================================================================
 : "${PLATFORM_DOMAIN:?Обязательная переменная: PLATFORM_DOMAIN}"
-: "${NATS_USER:?Обязательная переменная: NATS_USER}"
-: "${NATS_PASSWORD:?Обязательная переменная: NATS_PASSWORD}"
-: "${NATS_CA_KEY:?Обязательная переменная: NATS_CA_KEY (PEM приватного ключа CA NATS)}"
-: "${NATS_CA_CERT:?Обязательная переменная: NATS_CA_CERT (PEM сертификата CA NATS)}"
-: "${NOMAD_CA_KEY:?Обязательная переменная: NOMAD_CA_KEY (PEM приватного ключа CA Nomad)}"
-: "${NOMAD_CA_CERT:?Обязательная переменная: NOMAD_CA_CERT (PEM сертификата CA Nomad)}"
-: "${NOMAD_GOSSIP_KEY:?Обязательная переменная: NOMAD_GOSSIP_KEY (32 байта в base64; openssl rand -base64 32)}"
-: "${NOMAD_TOKEN:?Обязательная переменная: NOMAD_TOKEN (UUID для Nomad ACL)}"
+: "${PLATFORM_NATS_USER:?Обязательная переменная: PLATFORM_NATS_USER}"
+: "${PLATFORM_NATS_PASSWORD:?Обязательная переменная: PLATFORM_NATS_PASSWORD}"
+: "${PLATFORM_NATS_CA_KEY:?Обязательная переменная: PLATFORM_NATS_CA_KEY (PEM приватного ключа CA NATS)}"
+: "${PLATFORM_NATS_CA_CERT:?Обязательная переменная: PLATFORM_NATS_CA_CERT (PEM сертификата CA NATS)}"
+: "${PLATFORM_NOMAD_CA_KEY:?Обязательная переменная: PLATFORM_NOMAD_CA_KEY (PEM приватного ключа CA Nomad)}"
+: "${PLATFORM_NOMAD_CA_CERT:?Обязательная переменная: PLATFORM_NOMAD_CA_CERT (PEM сертификата CA Nomad)}"
+: "${PLATFORM_NOMAD_GOSSIP_KEY:?Обязательная переменная: PLATFORM_NOMAD_GOSSIP_KEY (32 байта в base64; openssl rand -base64 32)}"
+: "${PLATFORM_NOMAD_TOKEN:?Обязательная переменная: PLATFORM_NOMAD_TOKEN (UUID для Nomad ACL)}"
 
 
 NATS_VERSION="${NATS_VERSION:-2.10.22}"
@@ -264,7 +264,7 @@ acl {
 }
 
 # TLS для inter-node RPC (4647). Через RPC идут Raft-консенсус и job specs,
-# а в job specs — реальные секреты (NATS_PASSWORD, AUTH_ACCESS_SECRET и др.
+# а в job specs — реальные секреты (PLATFORM_NATS_PASSWORD, X_AUTH_ACCESS_SECRET и др.
 # через NOMAD_VAR_*). Без TLS на cross-DC через WAN всё это идёт в открытом
 # виде — атакующий с MITM собирает секреты непрерывно. См. I-H8.
 #
@@ -274,7 +274,7 @@ acl {
 #
 # verify_server_hostname = true: при исходящем RPC Nomad проверяет, что
 # cert пира содержит SAN server.global.nomad (region=global default).
-# CA-ключ хранится только в GitHub Secret NOMAD_CA_KEY; на сервере
+# CA-ключ хранится только в GitHub Secret PLATFORM_NOMAD_CA_KEY; на сервере
 # остаются только публичный ca.crt + node.crt + node.key.
 tls {
   rpc                    = true
@@ -289,7 +289,7 @@ HCL
   # Env-файл для systemd (chmod 600 — только root)
   cat > "$NOMAD_CONF_DIR/env" << ENV
 PLATFORM_DOMAIN=${PLATFORM_DOMAIN}
-NOMAD_GOSSIP_KEY=${NOMAD_GOSSIP_KEY}
+PLATFORM_NOMAD_GOSSIP_KEY=${PLATFORM_NOMAD_GOSSIP_KEY}
 NODE_IP=${NODE_IP}
 ENV
   chmod 600 "$NOMAD_CONF_DIR/env"
@@ -305,8 +305,8 @@ Wants=network-online.target
 EnvironmentFile=/etc/nomad/env
 # -encrypt: gossip-key для Serf (4648). Передаём через CLI-флаг, чтобы ключ
 # жил в /etc/nomad/env (chmod 600), а не в /etc/nomad/nomad.hcl (chmod 644).
-# systemd раскрывает ${NOMAD_GOSSIP_KEY} из EnvironmentFile.
-ExecStart=/usr/bin/nomad agent -config=/etc/nomad/nomad.hcl -encrypt=${NOMAD_GOSSIP_KEY}
+# systemd раскрывает ${PLATFORM_NOMAD_GOSSIP_KEY} из EnvironmentFile.
+ExecStart=/usr/bin/nomad agent -config=/etc/nomad/nomad.hcl -encrypt=${PLATFORM_NOMAD_GOSSIP_KEY}
 ExecReload=/bin/kill -HUP $MAINPID
 KillSignal=SIGINT
 KillMode=process
@@ -396,10 +396,10 @@ generate_nomad_certs() {
 
   command -v openssl >/dev/null || apt-get install -y -q --no-install-recommends openssl
 
-  printf '%s\n' "$NOMAD_CA_CERT" > "$NOMAD_CONF_DIR/ca.crt"
+  printf '%s\n' "$PLATFORM_NOMAD_CA_CERT" > "$NOMAD_CONF_DIR/ca.crt"
   chmod 644 "$NOMAD_CONF_DIR/ca.crt"
   openssl x509 -noout -in "$NOMAD_CONF_DIR/ca.crt" 2>/dev/null \
-    || die "NOMAD_CA_CERT: невалидный сертификат — значение секрета должно быть содержимым nomad-ca.crt (PEM)"
+    || die "PLATFORM_NOMAD_CA_CERT: невалидный сертификат — значение секрета должно быть содержимым nomad-ca.crt (PEM)"
 
   # ECDSA P-256 — соответствует выбору для NATS-cert.
   openssl ecparam -name prime256v1 -genkey -noout -out "$NOMAD_CONF_DIR/node.key" #2>/dev/null
@@ -422,7 +422,7 @@ generate_nomad_certs() {
   local ca_key_tmp
   ca_key_tmp=$(mktemp -p /dev/shm)
   chmod 600 "$ca_key_tmp"
-  printf '%s\n' "$NOMAD_CA_KEY" > "$ca_key_tmp"
+  printf '%s\n' "$PLATFORM_NOMAD_CA_KEY" > "$ca_key_tmp"
 
   openssl x509 -req \
     -in /tmp/nomad-node.csr \
@@ -446,7 +446,7 @@ generate_nomad_certs() {
 # =============================================================================
 # TLS-сертификаты NATS
 #
-# CA-ключ (NATS_CA_KEY) получается из env, используется только для подписи
+# CA-ключ (PLATFORM_NATS_CA_KEY) получается из env, используется только для подписи
 # сертификата этой ноды и сразу удаляется. На сервере остаётся только:
 #   /etc/nats/ca.crt   — публичный сертификат CA (для проверки других нод)
 #   /etc/nats/node.crt — сертификат этой ноды (подписан CA)
@@ -460,14 +460,14 @@ generate_nats_certs() {
   mkdir -p "$NATS_CONF_DIR"
 
   # CA cert — публичный, нужен для проверки сертификатов других нод
-  printf '%s\n' "$NATS_CA_CERT" > "$NATS_CONF_DIR/ca.crt"
+  printf '%s\n' "$PLATFORM_NATS_CA_CERT" > "$NATS_CONF_DIR/ca.crt"
   chmod 644 "$NATS_CONF_DIR/ca.crt"
   openssl x509 -noout -in "$NATS_CONF_DIR/ca.crt" 2>/dev/null \
-    || die "NATS_CA_CERT: невалидный сертификат — значение секрета должно быть содержимым nats-ca.crt (PEM)"
+    || die "PLATFORM_NATS_CA_CERT: невалидный сертификат — значение секрета должно быть содержимым nats-ca.crt (PEM)"
 
   # Ключ ноды: ECDSA P-256 — NIST-current, защита до 2050+, ~3× быстрее
   # TLS-handshake чем RSA-2048. Алгоритм node-key независим от алгоритма CA-key
-  # (NATS_CA_KEY приходит из env, не трогаем).
+  # (PLATFORM_NATS_CA_KEY приходит из env, не трогаем).
   openssl ecparam -name prime256v1 -genkey -noout -out "$NATS_CONF_DIR/node.key" 2>/dev/null
   chmod 600 "$NATS_CONF_DIR/node.key"
 
@@ -489,7 +489,7 @@ generate_nats_certs() {
   local ca_key_tmp
   ca_key_tmp=$(mktemp -p /dev/shm)
   chmod 600 "$ca_key_tmp"
-  printf '%s\n' "$NATS_CA_KEY" > "$ca_key_tmp"
+  printf '%s\n' "$PLATFORM_NATS_CA_KEY" > "$ca_key_tmp"
 
   openssl x509 -req \
     -in /tmp/nats-node.csr \
@@ -541,8 +541,8 @@ jetstream {
 }
 
 authorization {
-  user:     $NATS_USER
-  password: $NATS_PASSWORD
+  user:     $PLATFORM_NATS_USER
+  password: $PLATFORM_NATS_PASSWORD
 }
 CONF
 
@@ -551,8 +551,8 @@ CONF
 HOSTNAME=$(hostname)
 NODE_IP=${NODE_IP}
 PLATFORM_DOMAIN=${PLATFORM_DOMAIN}
-NATS_CLUSTER_USER=${NATS_USER}
-NATS_CLUSTER_PASSWORD=${NATS_PASSWORD}
+NATS_CLUSTER_USER=${PLATFORM_NATS_USER}
+NATS_CLUSTER_PASSWORD=${PLATFORM_NATS_PASSWORD}
 ENV
   chmod 600 "$NATS_CONF_DIR/env"
 
@@ -651,7 +651,7 @@ start_services() {
 # =============================================================================
 # Nomad ACL bootstrap
 #
-# NOMAD_TOKEN — UUID, сгенерированный заранее и положенный в GitHub Secrets.
+# PLATFORM_NOMAD_TOKEN — UUID, сгенерированный заранее и положенный в GitHub Secrets.
 # Передаётся в Nomad через HTTP API как BootstrapSecret.
 # На первой ноде: Nomad принимает токен и активирует ACL.
 # На последующих: запрос вернёт ошибку "bootstrap already done" — игнорируем.
@@ -669,7 +669,7 @@ bootstrap_acl() {
   # Проверяем токен перед попыткой bootstrap.
   # Если токен уже валиден (повторный запуск setup.sh с тем же токеном) — ничего не делаем.
   if curl -sf --max-time 5 \
-      -H "X-Nomad-Token: ${NOMAD_TOKEN}" \
+      -H "X-Nomad-Token: ${PLATFORM_NOMAD_TOKEN}" \
       "http://127.0.0.1:4646/v1/acl/token/self" &>/dev/null; then
     info "ACL уже настроен, токен валиден (повторный запуск)"
     return 0
@@ -680,23 +680,23 @@ bootstrap_acl() {
   # При повторном вызове возвращает ошибку "already bootstrapped" — игнорируем (|| true).
   local bootstrap_result
   bootstrap_result=$(curl -s -X POST "http://127.0.0.1:4646/v1/acl/bootstrap" \
-    -d "{\"BootstrapSecret\": \"${NOMAD_TOKEN}\"}" 2>&1) || true
+    -d "{\"BootstrapSecret\": \"${PLATFORM_NOMAD_TOKEN}\"}" 2>&1) || true
 
   # Проверяем токен после попытки bootstrap.
   if curl -sf --max-time 5 \
-      -H "X-Nomad-Token: ${NOMAD_TOKEN}" \
+      -H "X-Nomad-Token: ${PLATFORM_NOMAD_TOKEN}" \
       "http://127.0.0.1:4646/v1/acl/token/self" &>/dev/null; then
     info "ACL настроен, токен валиден"
     return 0
   fi
 
   # Токен всё ещё невалиден. Две возможные причины:
-  # 1. ACL уже забутстрапен с другим токеном (нужен правильный NOMAD_TOKEN из GitHub Secret)
+  # 1. ACL уже забутстрапен с другим токеном (нужен правильный PLATFORM_NOMAD_TOKEN из GitHub Secret)
   # 2. Bootstrap не удался по другой причине
   if echo "$bootstrap_result" | grep -q "already done"; then
-    die "ACL уже забутстрапен с другим токеном. Используйте NOMAD_TOKEN из GitHub Secret или сбросьте Nomad: rm -rf /var/lib/nomad/* && systemctl restart nomad"
+    die "ACL уже забутстрапен с другим токеном. Используйте PLATFORM_NOMAD_TOKEN из GitHub Secret или сбросьте Nomad: rm -rf /var/lib/nomad/* && systemctl restart nomad"
   else
-    die "Не удалось настроить Nomad ACL. Bootstrap ответ: ${bootstrap_result}. Проверьте NOMAD_TOKEN или логи: journalctl -u nomad -n 50"
+    die "Не удалось настроить Nomad ACL. Bootstrap ответ: ${bootstrap_result}. Проверьте PLATFORM_NOMAD_TOKEN или логи: journalctl -u nomad -n 50"
   fi
 }
 

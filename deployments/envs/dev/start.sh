@@ -396,14 +396,14 @@ job "gateway" {
       }
 
       env {
-        NATS_HOST                = "127.0.0.1"
-        NATS_PORT                = "$nats_host_port"
-        NATS_USER                = "$nats_user"
-        NATS_PASSWORD            = "$nats_password"
-        HTTP_ADDR                = "\${NOMAD_IP_http}:80"
-        ALLOWED_HOSTS            = "$allowed_hosts"
-        GATEWAY_AUTH_RATE_PREFIX = "$gateway_auth_rate_prefix"
-        LOG_LEVEL                = "$log_level"
+        PLATFORM_NATS_HOST                = "127.0.0.1"
+        PLATFORM_NATS_PORT                = "$nats_host_port"
+        PLATFORM_NATS_USER                = "$nats_user"
+        PLATFORM_NATS_PASSWORD            = "$nats_password"
+        PLATFORM_HTTP_ADDR                = "\${NOMAD_IP_http}:80"
+        PLATFORM_ALLOWED_HOSTS            = "$allowed_hosts"
+        PLATFORM_GATEWAY_AUTH_RATE_PREFIX = "$gateway_auth_rate_prefix"
+        PLATFORM_LOG_LEVEL                = "$log_level"
       }
 
       service {
@@ -488,20 +488,20 @@ job "xauth" {
       }
 
       env {
-        NATS_HOST           = "127.0.0.1"
-        NATS_PORT           = "$nats_host_port"
-        NATS_USER           = "$nats_user"
-        NATS_PASSWORD       = "$nats_password"
-        AUTH_USERNAME       = "$auth_username"
-        AUTH_PASSWORD       = "$auth_password"
-        AUTH_ACCESS_SECRET  = "$auth_access_secret"
-        AUTH_REFRESH_SECRET = "$auth_refresh_secret"
-        AUTH_ACCESS_TTL     = "${auth_access_ttl:-15m}"
-        AUTH_REFRESH_TTL    = "${auth_refresh_ttl:-168h}"
-        COOKIE_DOMAIN       = "$cookie_domain"
-        COOKIE_SECURE       = "${cookie_secure:-false}"
-        HEALTH_ADDR         = "\${NOMAD_IP_health}:\${NOMAD_PORT_health}"
-        LOG_LEVEL           = "$log_level"
+        PLATFORM_NATS_HOST           = "127.0.0.1"
+        PLATFORM_NATS_PORT           = "$nats_host_port"
+        PLATFORM_NATS_USER           = "$nats_user"
+        PLATFORM_NATS_PASSWORD       = "$nats_password"
+        X_AUTH_USERNAME       = "$auth_username"
+        X_AUTH_PASSWORD       = "$auth_password"
+        X_AUTH_ACCESS_SECRET  = "$auth_access_secret"
+        X_AUTH_REFRESH_SECRET = "$auth_refresh_secret"
+        X_AUTH_ACCESS_TTL     = "${auth_access_ttl:-15m}"
+        X_AUTH_REFRESH_TTL    = "${auth_refresh_ttl:-168h}"
+        X_AUTH_COOKIE_DOMAIN       = "$cookie_domain"
+        X_AUTH_COOKIE_SECURE       = "${cookie_secure:-false}"
+        X_HEALTH_ADDR         = "\${NOMAD_IP_health}:\${NOMAD_PORT_health}"
+        PLATFORM_LOG_LEVEL           = "$log_level"
       }
 
       resources {
@@ -572,15 +572,15 @@ job "xhttp" {
       }
 
       env {
-        NATS_HOST     = "127.0.0.1"
-        NATS_PORT     = "$nats_host_port"
-        NATS_USER     = "$nats_user"
-        NATS_PASSWORD = "$nats_password"
-        DATABASE_URL  = "$database_url"
-        AUTH_ACCESS_SECRET = "$auth_access_secret"
-        CACHE_TTL     = "${cache_ttl:-30s}"
-        HEALTH_ADDR   = "\${NOMAD_IP_health}:\${NOMAD_PORT_health}"
-        LOG_LEVEL     = "$log_level"
+        PLATFORM_NATS_HOST     = "127.0.0.1"
+        PLATFORM_NATS_PORT     = "$nats_host_port"
+        PLATFORM_NATS_USER     = "$nats_user"
+        PLATFORM_NATS_PASSWORD = "$nats_password"
+        X_HTTP_DATABASE_URL  = "$database_url"
+        X_AUTH_ACCESS_SECRET  = "$auth_access_secret"
+        X_HTTP_CACHE_TTL     = "${cache_ttl:-30s}"
+        X_HEALTH_ADDR   = "\${NOMAD_IP_health}:\${NOMAD_PORT_health}"
+        PLATFORM_LOG_LEVEL     = "$log_level"
       }
 
       resources {
@@ -651,13 +651,13 @@ job "xws" {
       }
 
       env {
-        NATS_HOST          = "127.0.0.1"
-        NATS_PORT          = "$nats_host_port"
-        NATS_USER          = "$nats_user"
-        NATS_PASSWORD      = "$nats_password"
-        INACTIVITY_TIMEOUT = "${inactivity_timeout:-3m}"
-        HEALTH_ADDR        = "\${NOMAD_IP_health}:\${NOMAD_PORT_health}"
-        LOG_LEVEL          = "$log_level"
+        PLATFORM_NATS_HOST          = "127.0.0.1"
+        PLATFORM_NATS_PORT          = "$nats_host_port"
+        PLATFORM_NATS_USER          = "$nats_user"
+        PLATFORM_NATS_PASSWORD      = "$nats_password"
+        X_WS_INACTIVITY_TIMEOUT = "${inactivity_timeout:-3m}"
+        X_HEALTH_ADDR        = "\${NOMAD_IP_health}:\${NOMAD_PORT_health}"
+        PLATFORM_LOG_LEVEL          = "$log_level"
       }
 
       resources {

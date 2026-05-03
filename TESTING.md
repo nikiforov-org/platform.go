@@ -87,15 +87,18 @@ curl http://127.0.0.1:8222/healthz
 # - Exit code 0
 ```
 
-## GitHub Secrets для workflow
+## GitHub Secrets и Variables для workflow
 
-Убедиться что существуют следующие secrets:
+Убедиться что существуют:
 
-- `SSH_PRIVATE_KEY` — приватный ключ для root@nodes
+**Secrets:**
+- `PLATFORM_DEPLOY_SSH_KEY` — приватный ключ для SSH на ноды
+
+**Variables:**
 - `PLATFORM_DOMAIN` — домен кластера (например, up.mt)
-- `HOST_FINGERPRINTS` — SHA256-fingerprints нод (опционально)
+- `PLATFORM_HOST_FINGERPRINTS` — SHA256-fingerprints прод-нод (опционально; пусто — TOFU-режим)
 
-Эти секреты уже используются в `ci.yml` и `*-deploy.yml`, дополнительных секретов не требуется.
+Эти секреты и переменные уже используются в `ci.yml` и `*-deploy.yml`, дополнительных не требуется.
 
 ## Коммит изменений
 
@@ -170,8 +173,8 @@ systemctl is-active nomad
 
 **Проверка:**
 ```bash
-# На ноде с валидным NOMAD_TOKEN:
-curl -s -H "X-Nomad-Token: $NOMAD_TOKEN" http://127.0.0.1:4646/v1/acl/token/self
+# На ноде с валидным PLATFORM_NOMAD_TOKEN:
+curl -s -H "X-Nomad-Token: $PLATFORM_NOMAD_TOKEN" http://127.0.0.1:4646/v1/acl/token/self
 # Ожидается: JSON с "Name":"Bootstrap Token"
 ```
 
@@ -179,11 +182,11 @@ curl -s -H "X-Nomad-Token: $NOMAD_TOKEN" http://127.0.0.1:4646/v1/acl/token/self
 ```
 416e9fa0-b563-4a9b-906b-dd440139bdac
 ```
-(Только для тестового сервера; в production использовать GitHub Secret NOMAD_TOKEN)
+(Только для тестового сервера; в production использовать GitHub Secret PLATFORM_NOMAD_TOKEN)
 
 ## Дополнительный фикс: Защита от повторного запуска setup.sh
 
-**Проблема:** При повторном запуске setup.sh с другим NOMAD_TOKEN скрипт падал с ошибкой "NOMAD_TOKEN не принят", так как ACL уже был забутстрапен с первым токеном.
+**Проблема:** При повторном запуске setup.sh с другим PLATFORM_NOMAD_TOKEN скрипт падал с ошибкой "PLATFORM_NOMAD_TOKEN не принят", так как ACL уже был забутстрапен с первым токеном.
 
 **Решение:** Добавлена проверка токена **перед** попыткой bootstrap:
 
@@ -197,13 +200,13 @@ curl -s -H "X-Nomad-Token: $NOMAD_TOKEN" http://127.0.0.1:4646/v1/acl/token/self
 
 **Сообщения:**
 - Повторный запуск: `ACL уже настроен, токен валиден (повторный запуск)`
-- Неверный токен: `ACL уже забутстрапен с другим токеном. Используйте NOMAD_TOKEN из GitHub Secret или сбросьте Nomad: rm -rf /var/lib/nomad/* && systemctl restart nomad`
+- Неверный токен: `ACL уже забутстрапен с другим токеном. Используйте PLATFORM_NOMAD_TOKEN из GitHub Secret или сбросьте Nomad: rm -rf /var/lib/nomad/* && systemctl restart nomad`
 
 **Проверка:**
 ```bash
 # Повторный запуск с правильным токеном — должен пройти без ошибок
-NOMAD_TOKEN=416e9fa0-b563-4a9b-906b-dd440139bdac bash setup.sh
+PLATFORM_NOMAD_TOKEN=416e9fa0-b563-4a9b-906b-dd440139bdac bash setup.sh
 
 # Запуск с неправильным токеном — понятное сообщение об ошибке
-NOMAD_TOKEN=wrong-token bash setup.sh
+PLATFORM_NOMAD_TOKEN=wrong-token bash setup.sh
 ```

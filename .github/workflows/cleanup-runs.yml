@@ -1,0 +1,91 @@
+name: Cleanup old workflow runs
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Режим очистки'
+        required: true
+        default: 'older_than'
+        type: choice
+        options:
+          - 'older_than'
+          - 'DELETE_ALL'
+      days:
+        description: 'Удалить runs старше N дней (игнорируется при DELETE_ALL)'
+        required: true
+        default: '30'
+      dry_run:
+        description: 'Только показать что будет удалено (без удаления)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  cleanup:
+    name: Delete old workflow runs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Cleanup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          MODE: ${{ inputs.mode }}
+          DAYS: ${{ inputs.days }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          DELETE_ALL=false
+          if [ "$MODE" = "DELETE_ALL" ]; then
+            DELETE_ALL=true
+            echo "РЕЖИМ: УДАЛИТЬ ВСЕ RUNS"
+          else
+            CUTOFF=$(date -u -d "$DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
+            echo "Удаление runs старше $DAYS дней (до $CUTOFF)"
+          fi
+          echo "Dry run: $DRY_RUN"
+          echo ""
+
+          TOTAL=0
+          DELETED=0
+          PAGE=1
+
+          while true; do
+            RUNS=$(gh api "repos/$REPO/actions/runs?per_page=100&page=$PAGE" --jq '.workflow_runs[] | "\(.id) \(.created_at) \(.name) \(.status)"')
+            [ -z "$RUNS" ] && break
+
+            while IFS= read -r LINE; do
+              RUN_ID=$(echo "$LINE" | awk '{print $1}')
+              CREATED=$(echo "$LINE" | awk '{print $2}')
+              REST=$(echo "$LINE" | cut -d' ' -f3-)
+
+              MATCH=false
+              if $DELETE_ALL; then
+                MATCH=true
+              elif [[ "$CREATED" < "$CUTOFF" ]]; then
+                MATCH=true
+              fi
+
+              if $MATCH; then
+                TOTAL=$((TOTAL + 1))
+                if [ "$DRY_RUN" = "false" ]; then
+                  gh api "repos/$REPO/actions/runs/$RUN_ID" -X DELETE --silent && DELETED=$((DELETED + 1))
+                  echo "  ✓ deleted: $RUN_ID ($CREATED) $REST"
+                else
+                  echo "  • would delete: $RUN_ID ($CREATED) $REST"
+                fi
+              fi
+            done <<< "$RUNS"
+
+            PAGE=$((PAGE + 1))
+          done
+
+          echo ""
+          if [ "$DRY_RUN" = "false" ]; then
+            echo "Удалено: $DELETED runs"
+          else
+            echo "Найдено для удаления: $TOTAL runs (dry run, ничего не удалено)"
+          fi

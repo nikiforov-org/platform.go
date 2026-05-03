@@ -411,7 +411,7 @@ func isTimeoutError(err error) bool {
 //     shutdown сервера). Нестандартный, но распространённый (nginx) код; ответ
 //     обычно до клиента не доходит, код полезен в логах и метриках.
 //   - 504 "gateway timeout"       — сработал собственный таймаут gateway
-//     (GATEWAY_NATS_REQUEST_TIMEOUT), клиент ещё подключён.
+//     (PLATFORM_GATEWAY_NATS_REQUEST_TIMEOUT), клиент ещё подключён.
 //   - 503 "service unavailable"   — прочие ошибки (NATS disconnected, no responders).
 func natsRequestErrStatus(clientCtx context.Context, err error) (int, string) {
 	// Проверяем клиентский контекст отдельно: именно он различает "клиент отменил"

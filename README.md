@@ -72,7 +72,7 @@
 
 ## Метрики и наблюдаемость
 
-Gateway экспонирует Prometheus-метрики через отдельный HTTP-эндпоинт на loopback (по умолчанию `127.0.0.1:8081/metrics`, переопределяется через `GATEWAY_METRICS_ADDR`). Bind на loopback осознанный: внешний доступ — через тот же SSH-tunnel, что и Nomad UI; multi-DC агрегация — через Prometheus federation.
+Gateway экспонирует Prometheus-метрики через отдельный HTTP-эндпоинт на loopback (по умолчанию `127.0.0.1:8081/metrics`, переопределяется через `PLATFORM_GATEWAY_METRICS_ADDR`). Bind на loopback осознанный: внешний доступ — через тот же SSH-tunnel, что и Nomad UI; multi-DC агрегация — через Prometheus federation.
 
 Ключевые метрики:
 - HTTP-запросы через Gateway: Counter + Histogram по `service`/`method`/`status`.
@@ -105,7 +105,7 @@ npm install
 npm run dev      # http://localhost:5173
 ```
 
-По умолчанию фронт ходит относительными путями через Vite dev-proxy на Gateway (`http://localhost`), поэтому HttpOnly-куки работают без CORS. Переменная `VITE_GATEWAY_URL` (`.env`) позволяет указать абсолютный URL Gateway — тогда фронт ходит напрямую (Gateway отдаёт CORS-заголовки для origin'ов из `ALLOWED_HOSTS`). Допустимые origin'ы в `deployments/envs/dev/dev.vars` уже включают `localhost:5173`.
+По умолчанию фронт ходит относительными путями через Vite dev-proxy на Gateway (`http://localhost`), поэтому HttpOnly-куки работают без CORS. Переменная `VITE_GATEWAY_URL` (`.env`) позволяет указать абсолютный URL Gateway — тогда фронт ходит напрямую (Gateway отдаёт CORS-заголовки для origin'ов из `PLATFORM_ALLOWED_HOSTS`). Допустимые origin'ы в `deployments/envs/dev/dev.vars` уже включают `localhost:5173`.
 
 ## Схема CI/CD (GitHub Actions)
 
@@ -117,6 +117,34 @@ npm run dev      # http://localhost:5173
 4. Rolling Update: Nomad по очереди перезапускает аллокации на нодах, обеспечивая zero downtime.
 
 Подробнее: `deployments/envs/prod/prod.md`.
+
+### Конфигурация через GitHub Secrets/Variables
+
+Деплой использует GitHub Secrets (для криптоматериалов) и Variables (для публичных настроек):
+
+**Соглашение об именовании:**
+- `PLATFORM_*` — переменные платформы (NATS, Nomad, Gateway)
+- `X_*` — переменные демо-сервисов (xauth, xhttp, xws)
+
+**Secrets** (Settings → Secrets → Actions):
+- `PLATFORM_DEPLOY_SSH_KEY` — SSH-ключ для деплоя
+- `PLATFORM_NATS_PASSWORD` — пароль NATS
+- `PLATFORM_NATS_CA_KEY`, `PLATFORM_NATS_CA_CERT` — mTLS для NATS cluster
+- `PLATFORM_NOMAD_CA_KEY`, `PLATFORM_NOMAD_CA_CERT` — TLS для Nomad RPC
+- `PLATFORM_NOMAD_GOSSIP_KEY` — ключ шифрования Serf gossip
+- `PLATFORM_NOMAD_TOKEN` — ACL-токен Nomad
+- `X_AUTH_PASSWORD`, `X_AUTH_ACCESS_SECRET`, `X_AUTH_REFRESH_SECRET` — демо-сервисы
+- `X_HTTP_DATABASE_URL` — PostgreSQL DSN (содержит пароль)
+
+**Variables** (Settings → Secrets → Variables):
+- `PLATFORM_DOMAIN` — DNS домен кластера
+- `PLATFORM_DEPLOY_USER` — SSH-пользователь
+- `PLATFORM_NATS_USER` — логин NATS
+- `PLATFORM_ALLOWED_HOSTS` — разрешённые CORS origins
+- `PLATFORM_HOST_FINGERPRINTS` — SHA256 fingerprint'ы прод-нод для MITM-защиты при деплое (fingerprint каждой ноды задаётся при запуске `Setup VPS` workflow, затем добавляется в эту переменную)
+- `PLATFORM_GATEWAY_AUTH_RATE_PREFIX`, `PLATFORM_GATEWAY_TRUSTED_PROXY` — настройки Gateway
+- `X_AUTH_USERNAME`, `X_AUTH_COOKIE_DOMAIN`, `X_AUTH_COOKIE_SECURE`, `X_AUTH_COOKIE_SAMESITE` — демо xauth
+- `X_AUTH_ACCESS_TTL`, `X_AUTH_REFRESH_TTL`, `X_HTTP_CACHE_TTL`, `X_WS_INACTIVITY_TIMEOUT` — таймауты
 
 ## Сетевые доступы (Firewall)
 
@@ -133,7 +161,7 @@ npm run dev      # http://localhost:5173
 ## Рекомендации по эксплуатации
 
 1. Логирование:
-Все сервисы пишут структурированные JSON-логи в `stderr` через `zerolog`. Уровень задаётся переменной окружения `LOG_LEVEL` (значения: `debug`, `info`, `warn`, `error`; по умолчанию `info`). Ротацию логов настраивать на стороне Nomad (`logs { max_files = 5, max_file_size = 10 }`): файлы пишутся автоматически, дополнительных агентов не требуется.
+Все сервисы пишут структурированные JSON-логи в `stderr` через `zerolog`. Уровень задаётся переменной окружения `PLATFORM_LOG_LEVEL` (значения: `debug`, `info`, `warn`, `error`; по умолчанию `info`). Ротацию логов настраивать на стороне Nomad (`logs { max_files = 5, max_file_size = 10 }`): файлы пишутся автоматически, дополнительных агентов не требуется.
 
 2. Swap: 
 Рекомендуется создать swap-файл на каждой VPS как "подушку безопасности" для кратковременных пиков RAM.
@@ -148,7 +176,7 @@ Cloudflare направляет трафик на единый IP баланси
 Падение одной ноды считается штатной ситуацией. При падении двух нод NATS-кластера или потере кворума JetStream возможна деградация state-слоя и частичная недоступность системы.
 
 6. Кластеры и дата-центры:
-Платформа работает как один кластер; ноды могут находиться в разных дата-центрах и у разных провайдеров без дополнительной настройки (`raft_multiplier=5` компенсирует WAN-latency). Весь межнодовый трафик зашифрован: NATS-кластер (6222) — mTLS, Nomad RPC (4647) — TLS, Nomad Serf (4648) — gossip-key. Для запуска нескольких изолированных кластеров (разные продукты) достаточно использовать разные `PLATFORM_DOMAIN` и отдельные CA-пары (`NATS_CA_KEY`/`NATS_CA_CERT`, `NOMAD_CA_KEY`/`NOMAD_CA_CERT`, `NOMAD_GOSSIP_KEY`) — `setup.sh` при этом не меняется.
+Платформа работает как один кластер; ноды могут находиться в разных дата-центрах и у разных провайдеров без дополнительной настройки (`raft_multiplier=5` компенсирует WAN-latency). Весь межнодовый трафик зашифрован: NATS-кластер (6222) — mTLS, Nomad RPC (4647) — TLS, Nomad Serf (4648) — gossip-key. Для запуска нескольких изолированных кластеров (разные продукты) достаточно использовать разные `PLATFORM_DOMAIN` и отдельные CA-пары (`PLATFORM_NATS_CA_KEY`/`PLATFORM_NATS_CA_CERT`, `PLATFORM_NOMAD_CA_KEY`/`PLATFORM_NOMAD_CA_CERT`, `PLATFORM_NOMAD_GOSSIP_KEY`) — `setup.sh` при этом не меняется.
 
 6. Работа с NATS / JetStream KV:
 KV использовать только для кэша, сессий и временных данных. Не использовать как основное хранилище бизнес-данных. Все операции Get/Put/Watch выполнять с таймаутами, чтобы не блокировать gateway при деградации кластера.
@@ -183,7 +211,7 @@ KV использовать только для кэша, сессий и вре
 │   │   ├── metrics/
 │   │   │   └── metrics.go            # Prometheus-метрики (gateway HTTP, NATS, WS, rate limiter)
 │   │   └── logger/
-│   │       └── logger.go             # zerolog-логгер: JSON в stderr, LOG_LEVEL из env
+│   │       └── logger.go             # zerolog-логгер: JSON в stderr, PLATFORM_LOG_LEVEL из env
 │   ├── services/
 │   │   ├── gateway/                  # Логика HTTP→NATS проксирования и WebSocket-бриджа
 │   │   │   ├── config.go

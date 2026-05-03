@@ -17,19 +17,19 @@ import (
 //
 // Переменные окружения:
 //
-//	NATS_HOST            — хост NATS-сервера                ("127.0.0.1")
-//	NATS_PORT            — порт NATS-сервера                 (4222)
-//	NATS_USER            — логин авторизации                 ("")
-//	NATS_PASSWORD        — пароль авторизации                ("")
-//	AUTH_USERNAME        — логин пользователя                (обязательно)
-//	AUTH_PASSWORD        — пароль пользователя               (обязательно)
-//	AUTH_ACCESS_SECRET   — HMAC-секрет для access-токенов   (обязательно)
-//	AUTH_REFRESH_SECRET  — HMAC-секрет для refresh-токенов  (обязательно)
-//	AUTH_ACCESS_TTL      — время жизни access-токена         ("15m")
-//	AUTH_REFRESH_TTL     — время жизни refresh-токена        ("168h")
-//	COOKIE_DOMAIN        — домен кук                         ("")
-//	COOKIE_SECURE        — флаг Secure на куках              ("true")
-//	COOKIE_SAMESITE      — SameSite-политика кук             ("strict")
+//	PLATFORM_NATS_HOST            — хост NATS-сервера                ("127.0.0.1")
+//	PLATFORM_NATS_PORT            — порт NATS-сервера                 (4222)
+//	PLATFORM_NATS_USER            — логин авторизации                 ("")
+//	PLATFORM_NATS_PASSWORD        — пароль авторизации                ("")
+//	X_AUTH_USERNAME        — логин пользователя                (обязательно)
+//	X_AUTH_PASSWORD        — пароль пользователя               (обязательно)
+//	X_AUTH_ACCESS_SECRET   — HMAC-секрет для access-токенов   (обязательно)
+//	X_AUTH_REFRESH_SECRET  — HMAC-секрет для refresh-токенов  (обязательно)
+//	X_AUTH_ACCESS_TTL      — время жизни access-токена         ("15m")
+//	X_AUTH_REFRESH_TTL     — время жизни refresh-токена        ("168h")
+//	X_AUTH_COOKIE_DOMAIN        — домен кук                         ("")
+//	X_AUTH_COOKIE_SECURE        — флаг Secure на куках              ("true")
+//	X_AUTH_COOKIE_SAMESITE      — SameSite-политика кук             ("strict")
 type Config struct {
 	NATS            nc.Config
 	Username        string
@@ -66,10 +66,10 @@ func LoadConfig(log zerolog.Logger) Config {
 	}
 
 	natsCfg := nc.DefaultConfig()
-	natsCfg.Server.Host = utils.GetEnv(log, "NATS_HOST", natsCfg.Server.Host)
-	natsCfg.Server.ClientPort = utils.GetEnv(log, "NATS_PORT", natsCfg.Server.ClientPort)
-	natsCfg.Auth.User = utils.GetEnv(log, "NATS_USER", "")
-	natsCfg.Auth.Password = utils.GetEnv(log, "NATS_PASSWORD", "")
+	natsCfg.Server.Host = utils.GetEnv(log, "PLATFORM_NATS_HOST", natsCfg.Server.Host)
+	natsCfg.Server.ClientPort = utils.GetEnv(log, "PLATFORM_NATS_PORT", natsCfg.Server.ClientPort)
+	natsCfg.Auth.User = utils.GetEnv(log, "PLATFORM_NATS_USER", "")
+	natsCfg.Auth.Password = utils.GetEnv(log, "PLATFORM_NATS_PASSWORD", "")
 	// KV-бакет для хранения JTI refresh-токенов (для отзыва при logout/ротации).
 	natsCfg.KV.BucketName = "authms_refresh_tokens"
 	// Replicas не задаётся — NewClient определяет число реплик автоматически.
@@ -77,14 +77,14 @@ func LoadConfig(log zerolog.Logger) Config {
 
 	return Config{
 		NATS:          natsCfg,
-		Username:      mustEnv("AUTH_USERNAME"),
-		Password:      mustEnv("AUTH_PASSWORD"),
-		AccessSecret:  []byte(mustEnv("AUTH_ACCESS_SECRET")),
-		RefreshSecret: []byte(mustEnv("AUTH_REFRESH_SECRET")),
-		AccessTTL:     utils.GetEnv(log, "AUTH_ACCESS_TTL", 15*time.Minute),
-		RefreshTTL:    utils.GetEnv(log, "AUTH_REFRESH_TTL", 168*time.Hour),
-		CookieDomain:   utils.GetEnv(log, "COOKIE_DOMAIN", ""),
-		CookieSecure:   utils.GetEnv(log, "COOKIE_SECURE", true),
-		CookieSameSite: parseSameSite(utils.GetEnv(log, "COOKIE_SAMESITE", "strict")),
+		Username:      mustEnv("X_AUTH_USERNAME"),
+		Password:      mustEnv("X_AUTH_PASSWORD"),
+		AccessSecret:  []byte(mustEnv("X_AUTH_ACCESS_SECRET")),
+		RefreshSecret: []byte(mustEnv("X_AUTH_REFRESH_SECRET")),
+		AccessTTL:     utils.GetEnv(log, "X_AUTH_ACCESS_TTL", 15*time.Minute),
+		RefreshTTL:    utils.GetEnv(log, "X_AUTH_REFRESH_TTL", 168*time.Hour),
+		CookieDomain:   utils.GetEnv(log, "X_AUTH_COOKIE_DOMAIN", ""),
+		CookieSecure:   utils.GetEnv(log, "X_AUTH_COOKIE_SECURE", true),
+		CookieSameSite: parseSameSite(utils.GetEnv(log, "X_AUTH_COOKIE_SAMESITE", "strict")),
 	}
 }

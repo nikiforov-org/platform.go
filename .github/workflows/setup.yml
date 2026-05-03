@@ -6,17 +6,17 @@
 # Предпочтительный способ: запустить setup.sh прямо на сервере (полный список
 # обязательных переменных — в шапке самого setup.sh).
 #
-# GitHub Secrets, необходимые для этого workflow:
-#   DEPLOY_SSH_KEY   — приватный Ed25519-ключ
-#   DEPLOY_USER      — SSH-пользователь (например: ubuntu)
-#   NATS_USER        — логин NATS-сервера
-#   NATS_PASSWORD    — пароль NATS-сервера
-#   NATS_CA_KEY      — приватный ключ CA NATS  (PEM, генерируется один раз локально)
-#   NATS_CA_CERT     — сертификат CA NATS      (PEM)
-#   NOMAD_CA_KEY     — приватный ключ CA Nomad (PEM, генерируется один раз локально)
-#   NOMAD_CA_CERT    — сертификат CA Nomad     (PEM)
-#   NOMAD_GOSSIP_KEY — 32-байтный gossip-key Nomad в base64 (openssl rand -base64 32)
-#   NOMAD_TOKEN      — UUID, используется как bootstrap-секрет Nomad ACL (uuidgen)
+# GitHub Secrets и Variables, необходимые для этого workflow:
+#   PLATFORM_DEPLOY_SSH_KEY   — [Secret] приватный Ed25519-ключ
+#   PLATFORM_DEPLOY_USER      — [Variable] SSH-пользователь (например: ubuntu)
+#   PLATFORM_NATS_USER        — [Variable] логин NATS-сервера
+#   PLATFORM_NATS_PASSWORD    — [Secret] пароль NATS-сервера
+#   PLATFORM_NATS_CA_KEY      — приватный ключ CA NATS  (PEM, генерируется один раз локально)
+#   PLATFORM_NATS_CA_CERT     — сертификат CA NATS      (PEM)
+#   PLATFORM_NOMAD_CA_KEY     — приватный ключ CA Nomad (PEM, генерируется один раз локально)
+#   PLATFORM_NOMAD_CA_CERT    — сертификат CA Nomad     (PEM)
+#   PLATFORM_NOMAD_GOSSIP_KEY — 32-байтный gossip-key Nomad в base64 (openssl rand -base64 32)
+#   PLATFORM_NOMAD_TOKEN      — UUID, используется как bootstrap-секрет Nomad ACL (uuidgen)
 
 name: Setup VPS
 
@@ -44,18 +44,18 @@ jobs:
 
       - name: Configure SSH
         env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          PLATFORM_DEPLOY_SSH_KEY: ${{ secrets.PLATFORM_DEPLOY_SSH_KEY }}
           NODE_IP: ${{ inputs.node_ip }}
           HOST_FINGERPRINT: ${{ inputs.host_fingerprint }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "$DEPLOY_SSH_KEY" > ~/.ssh/setup_key
+          echo "$PLATFORM_DEPLOY_SSH_KEY" > ~/.ssh/setup_key
           chmod 600 ~/.ssh/setup_key
 
           # Получаем host keys целевой ноды через ssh-keyscan и помещаем в known_hosts.
           # Если HOST_FINGERPRINT задан — верифицируем (защита от MITM первого
-          # подключения, утечка NATS_CA_KEY/NOMAD_CA_KEY/NOMAD_GOSSIP_KEY/NOMAD_TOKEN
+          # подключения, утечка PLATFORM_NATS_CA_KEY/PLATFORM_NOMAD_CA_KEY/PLATFORM_NOMAD_GOSSIP_KEY/PLATFORM_NOMAD_TOKEN
           # на чужой эндпоинт исключена).
           # Если пуст — TOFU: первый ключ принимаем, fingerprint выводится в лог
           # для последующей сверки оператором.
@@ -85,14 +85,14 @@ jobs:
       # без кавычек выполняет $() из подставленного значения).
       - name: Write setup env
         env:
-          NATS_USER: ${{ secrets.NATS_USER }}
-          NATS_PASSWORD: ${{ secrets.NATS_PASSWORD }}
-          NATS_CA_KEY: ${{ secrets.NATS_CA_KEY }}
-          NATS_CA_CERT: ${{ secrets.NATS_CA_CERT }}
-          NOMAD_CA_KEY: ${{ secrets.NOMAD_CA_KEY }}
-          NOMAD_CA_CERT: ${{ secrets.NOMAD_CA_CERT }}
-          NOMAD_GOSSIP_KEY: ${{ secrets.NOMAD_GOSSIP_KEY }}
-          NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
+          PLATFORM_NATS_USER: ${{ vars.PLATFORM_NATS_USER }}
+          PLATFORM_NATS_PASSWORD: ${{ secrets.PLATFORM_NATS_PASSWORD }}
+          PLATFORM_NATS_CA_KEY: ${{ secrets.PLATFORM_NATS_CA_KEY }}
+          PLATFORM_NATS_CA_CERT: ${{ secrets.PLATFORM_NATS_CA_CERT }}
+          PLATFORM_NOMAD_CA_KEY: ${{ secrets.PLATFORM_NOMAD_CA_KEY }}
+          PLATFORM_NOMAD_CA_CERT: ${{ secrets.PLATFORM_NOMAD_CA_CERT }}
+          PLATFORM_NOMAD_GOSSIP_KEY: ${{ secrets.PLATFORM_NOMAD_GOSSIP_KEY }}
+          PLATFORM_NOMAD_TOKEN: ${{ secrets.PLATFORM_NOMAD_TOKEN }}
           PLATFORM_DOMAIN: ${{ inputs.platform_domain }}
           NODE_IP: ${{ inputs.node_ip }}
           REPO_URL: https://github.com/${{ github.repository }}.git
@@ -100,21 +100,21 @@ jobs:
           cat > /tmp/setup_env << EOF
           NODE_IP="${NODE_IP}"
           PLATFORM_DOMAIN="${PLATFORM_DOMAIN}"
-          NATS_USER="${NATS_USER}"
-          NATS_PASSWORD="${NATS_PASSWORD}"
-          NATS_CA_KEY="${NATS_CA_KEY}"
-          NATS_CA_CERT="${NATS_CA_CERT}"
-          NOMAD_CA_KEY="${NOMAD_CA_KEY}"
-          NOMAD_CA_CERT="${NOMAD_CA_CERT}"
-          NOMAD_GOSSIP_KEY="${NOMAD_GOSSIP_KEY}"
-          NOMAD_TOKEN="${NOMAD_TOKEN}"
+          PLATFORM_NATS_USER="${PLATFORM_NATS_USER}"
+          PLATFORM_NATS_PASSWORD="${PLATFORM_NATS_PASSWORD}"
+          PLATFORM_NATS_CA_KEY="${PLATFORM_NATS_CA_KEY}"
+          PLATFORM_NATS_CA_CERT="${PLATFORM_NATS_CA_CERT}"
+          PLATFORM_NOMAD_CA_KEY="${PLATFORM_NOMAD_CA_KEY}"
+          PLATFORM_NOMAD_CA_CERT="${PLATFORM_NOMAD_CA_CERT}"
+          PLATFORM_NOMAD_GOSSIP_KEY="${PLATFORM_NOMAD_GOSSIP_KEY}"
+          PLATFORM_NOMAD_TOKEN="${PLATFORM_NOMAD_TOKEN}"
           REPO_URL="${REPO_URL}"
           EOF
           chmod 600 /tmp/setup_env
 
       - name: Copy setup files
         env:
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          PLATFORM_DEPLOY_USER: ${{ vars.PLATFORM_DEPLOY_USER }}
           NODE_IP: ${{ inputs.node_ip }}
         run: |
           # StrictHostKeyChecking=yes — host keys уже в known_hosts (см. Configure SSH);
@@ -122,17 +122,17 @@ jobs:
           SCP="scp -i ~/.ssh/setup_key -o StrictHostKeyChecking=yes"
           $SCP /tmp/setup_env \
             deployments/envs/prod/setup.sh \
-            "${DEPLOY_USER}@${NODE_IP}:/tmp/"
+            "${PLATFORM_DEPLOY_USER}@${NODE_IP}:/tmp/"
 
       - name: Run setup.sh
         env:
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          PLATFORM_DEPLOY_USER: ${{ vars.PLATFORM_DEPLOY_USER }}
           NODE_IP: ${{ inputs.node_ip }}
         run: |
           SSH="ssh -i ~/.ssh/setup_key -o StrictHostKeyChecking=yes -o BatchMode=yes"
-          $SSH "${DEPLOY_USER}@${NODE_IP}" "sudo bash -c 'set -a; . /tmp/setup_env; set +a; bash /tmp/setup.sh'"
+          $SSH "${PLATFORM_DEPLOY_USER}@${NODE_IP}" "sudo bash -c 'set -a; . /tmp/setup_env; set +a; bash /tmp/setup.sh'"
           # Удаление файлов тоже под sudo, на случай если env-файл стал принадлежать руту
-          $SSH "${DEPLOY_USER}@${NODE_IP}" "sudo rm -f /tmp/setup_env /tmp/setup.sh"
+          $SSH "${PLATFORM_DEPLOY_USER}@${NODE_IP}" "sudo rm -f /tmp/setup_env /tmp/setup.sh"
 
       - name: Cleanup
         if: always()

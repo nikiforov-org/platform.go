@@ -25,18 +25,18 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.PLATFORM_DEPLOY_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
           # Добавить fingerprints всех известных хостов
-          if [[ -n "${{ secrets.HOST_FINGERPRINTS }}" ]]; then
-            echo "${{ secrets.HOST_FINGERPRINTS }}" >> ~/.ssh/known_hosts
+          if [[ -n "${{ vars.PLATFORM_HOST_FINGERPRINTS }}" ]]; then
+            echo "${{ vars.PLATFORM_HOST_FINGERPRINTS }}" >> ~/.ssh/known_hosts
           fi
 
       - name: Get cluster nodes from DNS
         id: nodes
         run: |
-          NODES=$(dig +short nodes.${{ secrets.PLATFORM_DOMAIN }} | sort)
+          NODES=$(dig +short nodes.${{ vars.PLATFORM_DOMAIN }} | sort)
           NODE_COUNT=$(echo "$NODES" | grep -v '^$' | wc -l)
 
           echo "nodes<<EOF" >> $GITHUB_OUTPUT
@@ -115,7 +115,7 @@ jobs:
         run: |
           NODES="${{ steps.nodes.outputs.nodes }}"
           SCENARIO="${{ steps.state.outputs.scenario }}"
-          PLATFORM_DOMAIN="${{ secrets.PLATFORM_DOMAIN }}"
+          PLATFORM_DOMAIN="${{ vars.PLATFORM_DOMAIN }}"
 
           echo "▶ Сценарий: $SCENARIO"
 

@@ -29,29 +29,29 @@ variable "CHECKSUM" {
   default     = ""
 }
 
-variable "NATS_USER" {
+variable "PLATFORM_NATS_USER" {
   default = ""
 }
 
-variable "NATS_PASSWORD" {
+variable "PLATFORM_NATS_PASSWORD" {
   default = ""
 }
 
-variable "ALLOWED_HOSTS" {
+variable "PLATFORM_ALLOWED_HOSTS" {
   description = "Разрешённые HTTP Origin (через запятую), например: example.com,api.example.com"
   default     = ""
 }
 
-variable "GATEWAY_AUTH_RATE_PREFIX" {
+variable "PLATFORM_GATEWAY_AUTH_RATE_PREFIX" {
   default = ""
 }
 
-variable "GATEWAY_TRUSTED_PROXY" {
+variable "PLATFORM_GATEWAY_TRUSTED_PROXY" {
   description = "IP доверенного прокси/LB (Cloudflare, балансировщик). Пустой — X-Real-IP игнорируется."
   default     = ""
 }
 
-variable "LOG_LEVEL" {
+variable "PLATFORM_LOG_LEVEL" {
   default = "info"
 }
 
@@ -110,15 +110,15 @@ job "gateway" {
       }
 
       env {
-        NATS_HOST                = "127.0.0.1"
-        NATS_PORT                = "4222"
-        NATS_USER                = var.NATS_USER
-        NATS_PASSWORD            = var.NATS_PASSWORD
-        HTTP_ADDR                = ":80"
-        ALLOWED_HOSTS            = var.ALLOWED_HOSTS
-        GATEWAY_AUTH_RATE_PREFIX = var.GATEWAY_AUTH_RATE_PREFIX
-        GATEWAY_TRUSTED_PROXY    = var.GATEWAY_TRUSTED_PROXY
-        LOG_LEVEL                = var.LOG_LEVEL
+        PLATFORM_NATS_HOST                = "127.0.0.1"
+        PLATFORM_NATS_PORT                = "4222"
+        PLATFORM_NATS_USER                = var.PLATFORM_NATS_USER
+        PLATFORM_NATS_PASSWORD            = var.PLATFORM_NATS_PASSWORD
+        PLATFORM_HTTP_ADDR                = ":80"
+        PLATFORM_ALLOWED_HOSTS            = var.PLATFORM_ALLOWED_HOSTS
+        PLATFORM_GATEWAY_AUTH_RATE_PREFIX = var.PLATFORM_GATEWAY_AUTH_RATE_PREFIX
+        PLATFORM_GATEWAY_TRUSTED_PROXY    = var.PLATFORM_GATEWAY_TRUSTED_PROXY
+        PLATFORM_LOG_LEVEL                = var.PLATFORM_LOG_LEVEL
       }
 
       service {

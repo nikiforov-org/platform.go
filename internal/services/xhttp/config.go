@@ -15,13 +15,13 @@ import (
 //
 // Переменные окружения:
 //
-//	NATS_HOST         — хост NATS-сервера      ("127.0.0.1")
-//	NATS_PORT         — порт NATS-сервера       (4222)
-//	NATS_USER         — логин авторизации       ("")
-//	NATS_PASSWORD     — пароль авторизации      ("")
-//	DATABASE_URL   — DSN PostgreSQL      (обязательно)
-//	AUTH_ACCESS_SECRET  — HMAC-ключ JWT       (обязательно, общий с сервисом xauth)
-//	CACHE_TTL         — TTL кэша                ("30s")
+//	PLATFORM_NATS_HOST         — хост NATS-сервера      ("127.0.0.1")
+//	PLATFORM_NATS_PORT         — порт NATS-сервера       (4222)
+//	PLATFORM_NATS_USER         — логин авторизации       ("")
+//	PLATFORM_NATS_PASSWORD     — пароль авторизации      ("")
+//	X_HTTP_DATABASE_URL   — DSN PostgreSQL      (обязательно)
+//	X_AUTH_ACCESS_SECRET  — HMAC-ключ JWT       (обязательно, общий с сервисом xauth)
+//	X_HTTP_CACHE_TTL         — TTL кэша                ("30s")
 type Config struct {
 	NATS         nc.Config
 	DatabaseURL  string
@@ -31,20 +31,20 @@ type Config struct {
 
 // LoadConfig читает конфигурацию из переменных окружения.
 func LoadConfig(log zerolog.Logger) Config {
-	dbURL := os.Getenv("DATABASE_URL")
+	dbURL := os.Getenv("X_HTTP_DATABASE_URL")
 	if dbURL == "" {
-		log.Fatal().Str("key", "DATABASE_URL").Msg("обязательная переменная окружения не задана")
+		log.Fatal().Str("key", "X_HTTP_DATABASE_URL").Msg("обязательная переменная окружения не задана")
 	}
-	accessSecret := os.Getenv("AUTH_ACCESS_SECRET")
+	accessSecret := os.Getenv("X_AUTH_ACCESS_SECRET")
 	if accessSecret == "" {
-		log.Fatal().Str("key", "AUTH_ACCESS_SECRET").Msg("обязательная переменная окружения не задана")
+		log.Fatal().Str("key", "X_AUTH_ACCESS_SECRET").Msg("обязательная переменная окружения не задана")
 	}
 
 	natsCfg := nc.DefaultConfig()
-	natsCfg.Server.Host = utils.GetEnv(log, "NATS_HOST", natsCfg.Server.Host)
-	natsCfg.Server.ClientPort = utils.GetEnv(log, "NATS_PORT", natsCfg.Server.ClientPort)
-	natsCfg.Auth.User = utils.GetEnv(log, "NATS_USER", "")
-	natsCfg.Auth.Password = utils.GetEnv(log, "NATS_PASSWORD", "")
+	natsCfg.Server.Host = utils.GetEnv(log, "PLATFORM_NATS_HOST", natsCfg.Server.Host)
+	natsCfg.Server.ClientPort = utils.GetEnv(log, "PLATFORM_NATS_PORT", natsCfg.Server.ClientPort)
+	natsCfg.Auth.User = utils.GetEnv(log, "PLATFORM_NATS_USER", "")
+	natsCfg.Auth.Password = utils.GetEnv(log, "PLATFORM_NATS_PASSWORD", "")
 	// Собственный KV-бакет сервиса, изолированный от platform_state.
 	natsCfg.KV.BucketName = "xhttp_cache"
 	// Replicas не задаётся — NewClient определяет число реплик автоматически.
@@ -54,6 +54,6 @@ func LoadConfig(log zerolog.Logger) Config {
 		NATS:         natsCfg,
 		DatabaseURL:  dbURL,
 		AccessSecret: []byte(accessSecret),
-		CacheTTL:     utils.GetEnv(log, "CACHE_TTL", 30*time.Second),
+		CacheTTL:     utils.GetEnv(log, "X_HTTP_CACHE_TTL", 30*time.Second),
 	}
 }

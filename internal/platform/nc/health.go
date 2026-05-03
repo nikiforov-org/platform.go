@@ -11,7 +11,7 @@
 // RegisterHealth поднимает:
 //  1. Подписку на `_health.<svc>.<nuid>` через основной nats.Conn (тот же
 //     dispatcher, что у бизнес-подписок) — отвечает пустой строкой.
-//  2. HTTP-сервер на HEALTH_ADDR с `/healthz`, который делает self-request
+//  2. HTTP-сервер на X_HEALTH_ADDR с `/healthz`, который делает self-request
 //     на `_health.<svc>.<nuid>` с таймаутом 1s. Ответ 200 — handler живой,
 //     503 — deadlock/disconnect.
 //

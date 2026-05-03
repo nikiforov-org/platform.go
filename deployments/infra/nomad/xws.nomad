@@ -20,19 +20,19 @@ variable "CHECKSUM" {
   default     = ""
 }
 
-variable "NATS_USER" {
+variable "PLATFORM_NATS_USER" {
   default = ""
 }
 
-variable "NATS_PASSWORD" {
+variable "PLATFORM_NATS_PASSWORD" {
   default = ""
 }
 
-variable "INACTIVITY_TIMEOUT" {
+variable "X_WS_INACTIVITY_TIMEOUT" {
   default = "3m"
 }
 
-variable "LOG_LEVEL" {
+variable "PLATFORM_LOG_LEVEL" {
   default = "info"
 }
 
@@ -112,13 +112,13 @@ job "xws" {
       }
 
       env {
-        NATS_HOST          = "127.0.0.1"
-        NATS_PORT          = "4222"
-        NATS_USER          = var.NATS_USER
-        NATS_PASSWORD      = var.NATS_PASSWORD
-        INACTIVITY_TIMEOUT = var.INACTIVITY_TIMEOUT
-        HEALTH_ADDR        = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
-        LOG_LEVEL          = var.LOG_LEVEL
+        PLATFORM_NATS_HOST          = "127.0.0.1"
+        PLATFORM_NATS_PORT          = "4222"
+        PLATFORM_NATS_USER          = var.PLATFORM_NATS_USER
+        PLATFORM_NATS_PASSWORD      = var.PLATFORM_NATS_PASSWORD
+        X_WS_INACTIVITY_TIMEOUT = var.X_WS_INACTIVITY_TIMEOUT
+        X_HEALTH_ADDR        = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
+        PLATFORM_LOG_LEVEL          = var.PLATFORM_LOG_LEVEL
       }
 
       resources {

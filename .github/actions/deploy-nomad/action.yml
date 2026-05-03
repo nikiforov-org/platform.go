@@ -10,8 +10,8 @@
 #   version    — версия релиза (например: build-42)
 #
 # Требует в env вызывающего workflow:
-#   DEPLOY_SSH_KEY, DEPLOY_USER, PLATFORM_DOMAIN, NOMAD_TOKEN
-#   HOST_FINGERPRINTS — список SHA256:... fingerprints прод-нод (multi-line или
+#   PLATFORM_DEPLOY_SSH_KEY, PLATFORM_DEPLOY_USER, PLATFORM_DOMAIN, PLATFORM_NOMAD_TOKEN
+#   PLATFORM_HOST_FINGERPRINTS — список SHA256:... fingerprints прод-нод (multi-line или
 #                       comma-separated). Пустой → TOFU режим (WARN в логе).
 #   CS_<SVC>_AMD64, CS_<SVC>_ARM64  — из артефакта checksums
 #   + все переменные объявленные в .nomad файле
@@ -43,17 +43,17 @@ runs:
         KEY_FILE=$(mktemp)
         KNOWN_HOSTS_FILE=$(mktemp)
         trap 'rm -f "$KEY_FILE" "$KNOWN_HOSTS_FILE"' EXIT
-        echo "$DEPLOY_SSH_KEY" > "$KEY_FILE"
+        echo "$PLATFORM_DEPLOY_SSH_KEY" > "$KEY_FILE"
 
         # Резолвим все A-записи PLATFORM_DOMAIN.
         HOSTS=$(dig +short "$PLATFORM_DOMAIN" A | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
         [ -n "$HOSTS" ] || { echo "DNS lookup failed for $PLATFORM_DOMAIN"; exit 1; }
 
         # Собираем host keys всех нод. Симметрия с setup.yml (I-H5):
-        # при заполненном HOST_FINGERPRINTS — сверка с allow-list, чтобы MITM
+        # при заполненном PLATFORM_HOST_FINGERPRINTS — сверка с allow-list, чтобы MITM
         # на маршруте между runner и прод-нодой не подменил ключ незаметно
-        # (NOMAD_TOKEN и все NOMAD_VAR_* секреты передаются по этому SSH-сеансу).
-        # Пустой HOST_FINGERPRINTS → TOFU: ssh-keyscan принимаем как есть, но
+        # (PLATFORM_NOMAD_TOKEN и все NOMAD_VAR_* секреты передаются по этому SSH-сеансу).
+        # Пустой PLATFORM_HOST_FINGERPRINTS → TOFU: ssh-keyscan принимаем как есть, но
         # дальше SSH идёт с StrictHostKeyChecking=yes — подмена внутри одного run
         # уже отлавливается. Для полноценной защиты оператор задаёт секрет.
         ssh-keyscan -t ed25519,ecdsa,rsa $HOSTS > "$KNOWN_HOSTS_FILE" 2>/dev/null
@@ -62,10 +62,10 @@ runs:
         echo "Host key fingerprints:"
         ssh-keygen -lf "$KNOWN_HOSTS_FILE"
 
-        if [ -n "$HOST_FINGERPRINTS" ]; then
+        if [ -n "$PLATFORM_HOST_FINGERPRINTS" ]; then
           # Нормализуем формат: multi-line или comma-separated → по строке на fp.
           # tr -d '\r' — защита от CRLF при копировании секрета из Windows-источника.
-          EXPECTED=$(printf '%s\n' "$HOST_FINGERPRINTS" | tr ',' '\n' | tr -d '\r' | grep -v '^$')
+          EXPECTED=$(printf '%s\n' "$PLATFORM_HOST_FINGERPRINTS" | tr ',' '\n' | tr -d '\r' | grep -v '^$')
           VERIFIED_HOSTS=""
           MITM_DETECTED=false
           for HOST in $HOSTS; do
@@ -84,7 +84,7 @@ runs:
             if $MATCH; then
               VERIFIED_HOSTS="$VERIFIED_HOSTS $HOST"
             else
-              echo "FAIL: ни один host key хоста $HOST не совпал с HOST_FINGERPRINTS"
+              echo "FAIL: ни один host key хоста $HOST не совпал с PLATFORM_HOST_FINGERPRINTS"
               echo "      Got: $HOST_FPS"
               MITM_DETECTED=true
             fi
@@ -102,8 +102,8 @@ runs:
           echo "OK: верифицированные ноды:$VERIFIED_HOSTS"
           HOSTS="$VERIFIED_HOSTS"
         else
-          echo "WARN: HOST_FINGERPRINTS не задан — TOFU режим, MITM первого подключения не отслеживается."
-          echo "      Сверьте fingerprints выше с консолью провайдера; задайте GitHub Secret HOST_FINGERPRINTS (по одному fp на строку или через запятую)."
+          echo "WARN: PLATFORM_HOST_FINGERPRINTS не задан — TOFU режим, MITM первого подключения не отслеживается."
+          echo "      Сверьте fingerprints выше с консолью провайдера; задайте GitHub Variable PLATFORM_HOST_FINGERPRINTS (по одному fp на строку или через запятую)."
         fi
 
         SSH="ssh -i $KEY_FILE \
@@ -129,7 +129,7 @@ runs:
         for HOST in $HOSTS; do
           echo "Trying $HOST..."
 
-          REMOTE_ARCH=$($SSH "${DEPLOY_USER}@${HOST}" "uname -m" 2>/dev/null) || continue
+          REMOTE_ARCH=$($SSH "${PLATFORM_DEPLOY_USER}@${HOST}" "uname -m" 2>/dev/null) || continue
           case "$REMOTE_ARCH" in
             x86_64)  ARCH=amd64 ;;
             aarch64) ARCH=arm64 ;;
@@ -141,7 +141,7 @@ runs:
           # /v1/status/leader: 200+non-empty означает «лидер в кластере есть»,
           # Nomad сам форвардит job run; curl -sf падает на любом не-2xx и connection
           # error. 4646 публично закрыт между runner и нодами — пробуем через SSH.
-          $SSH "${DEPLOY_USER}@${HOST}" "curl -sf http://127.0.0.1:4646/v1/status/leader >/dev/null" 2>/dev/null \
+          $SSH "${PLATFORM_DEPLOY_USER}@${HOST}" "curl -sf http://127.0.0.1:4646/v1/status/leader >/dev/null" 2>/dev/null \
             || { echo "  Nomad not responsive on $HOST, trying next..."; continue; }
 
           CS_VAR="CS_${SVC_UPPER}_$(echo $ARCH | tr '[:lower:]' '[:upper:]')"
@@ -166,7 +166,7 @@ runs:
             ENV_EXPORTS="${ENV_EXPORTS}export NOMAD_VAR_${VAR}=$(printf '%q' "$VAL")"$'\n'
           done
 
-          Q_NOMAD_TOKEN=$(printf '%q' "$NOMAD_TOKEN")
+          Q_NOMAD_TOKEN=$(printf '%q' "$PLATFORM_NOMAD_TOKEN")
 
           # 4 *-deploy.yml workflow триггерятся параллельно после CI и каждый
           # делает git pull в /opt/platform → race на .git/index.lock.
@@ -215,7 +215,7 @@ runs:
           #   - sshd EXEC-логов в /var/log/auth.log при LogLevel >= VERBOSE.
           # printf '%q' для Q_NOMAD_TOKEN остаётся — защита от shell-injection
           # при спец-символах в токене на стороне remote bash.
-          if $SSH "${DEPLOY_USER}@${HOST}" 'bash -s' <<< "$REMOTE_SCRIPT"; then
+          if $SSH "${PLATFORM_DEPLOY_USER}@${HOST}" 'bash -s' <<< "$REMOTE_SCRIPT"; then
             echo "Deployed ${NOMAD_FILE} successfully via $HOST"
             DEPLOYED=true
             break

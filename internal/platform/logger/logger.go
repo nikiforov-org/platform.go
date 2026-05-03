@@ -3,12 +3,12 @@
 // logger — инициализация структурированного логгера для микросервисов платформы.
 // Каждый сервис создаёт свой экземпляр через New, получая logger с полем "service".
 //
-// Уровень логирования задаётся через переменную окружения LOG_LEVEL:
+// Уровень логирования задаётся через переменную окружения PLATFORM_LOG_LEVEL:
 //
-//	LOG_LEVEL=debug   — все сообщения, включая отладочные
-//	LOG_LEVEL=info    — информационные, предупреждения, ошибки (по умолчанию)
-//	LOG_LEVEL=warn    — только предупреждения и ошибки
-//	LOG_LEVEL=error   — только ошибки
+//	PLATFORM_LOG_LEVEL=debug   — все сообщения, включая отладочные
+//	PLATFORM_LOG_LEVEL=info    — информационные, предупреждения, ошибки (по умолчанию)
+//	PLATFORM_LOG_LEVEL=warn    — только предупреждения и ошибки
+//	PLATFORM_LOG_LEVEL=error   — только ошибки
 package logger
 
 import (
@@ -27,7 +27,7 @@ import (
 // и любой сценарий с несколькими логгерами в одном процессе.
 func New(service string) zerolog.Logger {
 	level := zerolog.InfoLevel
-	if raw := strings.ToLower(os.Getenv("LOG_LEVEL")); raw != "" {
+	if raw := strings.ToLower(os.Getenv("PLATFORM_LOG_LEVEL")); raw != "" {
 		if lvl, err := zerolog.ParseLevel(raw); err == nil {
 			level = lvl
 		}

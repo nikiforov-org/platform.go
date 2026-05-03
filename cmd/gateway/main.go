@@ -31,7 +31,7 @@ func main() {
 	}
 
 	if len(cfg.AllowedHosts) == 0 {
-		log.Warn().Msg("ALLOWED_HOSTS не задан — проверка Origin отключена. Допустимо только в dev-окружении.")
+		log.Warn().Msg("PLATFORM_ALLOWED_HOSTS не задан — проверка Origin отключена. Допустимо только в dev-окружении.")
 	}
 
 	// 2. NATS.
@@ -48,7 +48,7 @@ func main() {
 
 	// 5. Prometheus /metrics endpoint на отдельном порту (loopback only).
 	// Сбой metrics-сервера не должен валить gateway — log-only.
-	metricsAddr := utils.GetEnv(log, "GATEWAY_METRICS_ADDR", "127.0.0.1:8081")
+	metricsAddr := utils.GetEnv(log, "PLATFORM_GATEWAY_METRICS_ADDR", "127.0.0.1:8081")
 	go func() {
 		if err := metrics.Serve(metricsAddr, log); err != nil && err != http.ErrServerClosed {
 			log.Error().Err(err).Msg("metrics endpoint failed")

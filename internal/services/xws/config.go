@@ -14,11 +14,11 @@ import (
 //
 // Переменные окружения:
 //
-//	NATS_HOST            — хост NATS-сервера      ("127.0.0.1")
-//	NATS_PORT            — порт NATS-сервера       (4222)
-//	NATS_USER            — логин авторизации       ("")
-//	NATS_PASSWORD        — пароль авторизации      ("")
-//	INACTIVITY_TIMEOUT   — таймаут бездействия    ("3m")
+//	PLATFORM_NATS_HOST            — хост NATS-сервера      ("127.0.0.1")
+//	PLATFORM_NATS_PORT            — порт NATS-сервера       (4222)
+//	PLATFORM_NATS_USER            — логин авторизации       ("")
+//	PLATFORM_NATS_PASSWORD        — пароль авторизации      ("")
+//	X_WS_INACTIVITY_TIMEOUT   — таймаут бездействия    ("3m")
 type Config struct {
 	NATS              nc.Config
 	InactivityTimeout time.Duration
@@ -27,14 +27,14 @@ type Config struct {
 // LoadConfig читает конфигурацию из переменных окружения.
 func LoadConfig(log zerolog.Logger) Config {
 	natsCfg := nc.DefaultConfig()
-	natsCfg.Server.Host = utils.GetEnv(log, "NATS_HOST", natsCfg.Server.Host)
-	natsCfg.Server.ClientPort = utils.GetEnv(log, "NATS_PORT", natsCfg.Server.ClientPort)
-	natsCfg.Auth.User = utils.GetEnv(log, "NATS_USER", "")
-	natsCfg.Auth.Password = utils.GetEnv(log, "NATS_PASSWORD", "")
+	natsCfg.Server.Host = utils.GetEnv(log, "PLATFORM_NATS_HOST", natsCfg.Server.Host)
+	natsCfg.Server.ClientPort = utils.GetEnv(log, "PLATFORM_NATS_PORT", natsCfg.Server.ClientPort)
+	natsCfg.Auth.User = utils.GetEnv(log, "PLATFORM_NATS_USER", "")
+	natsCfg.Auth.Password = utils.GetEnv(log, "PLATFORM_NATS_PASSWORD", "")
 	natsCfg.KV.BucketName = "" // xws не использует KV-хранилище.
 
 	return Config{
 		NATS:              natsCfg,
-		InactivityTimeout: utils.GetEnv(log, "INACTIVITY_TIMEOUT", 3*time.Minute),
+		InactivityTimeout: utils.GetEnv(log, "X_WS_INACTIVITY_TIMEOUT", 3*time.Minute),
 	}
 }

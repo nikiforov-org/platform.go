@@ -20,29 +20,29 @@ variable "CHECKSUM" {
   default     = ""
 }
 
-variable "NATS_USER" {
+variable "PLATFORM_NATS_USER" {
   default = ""
 }
 
-variable "NATS_PASSWORD" {
+variable "PLATFORM_NATS_PASSWORD" {
   default = ""
 }
 
-variable "DATABASE_URL" {
+variable "X_HTTP_DATABASE_URL" {
   description = "PostgreSQL DSN."
   default     = ""
 }
 
-variable "AUTH_ACCESS_SECRET" {
+variable "X_AUTH_ACCESS_SECRET" {
   description = "HMAC-ключ подписи/валидации access JWT. Общий с сервисом xauth."
   default     = ""
 }
 
-variable "CACHE_TTL" {
+variable "X_HTTP_CACHE_TTL" {
   default = "30s"
 }
 
-variable "LOG_LEVEL" {
+variable "PLATFORM_LOG_LEVEL" {
   default = "info"
 }
 
@@ -122,15 +122,15 @@ job "xhttp" {
       }
 
       env {
-        NATS_HOST     = "127.0.0.1"
-        NATS_PORT     = "4222"
-        NATS_USER     = var.NATS_USER
-        NATS_PASSWORD = var.NATS_PASSWORD
-        DATABASE_URL  = var.DATABASE_URL
-        AUTH_ACCESS_SECRET = var.AUTH_ACCESS_SECRET
-        CACHE_TTL     = var.CACHE_TTL
-        HEALTH_ADDR   = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
-        LOG_LEVEL     = var.LOG_LEVEL
+        PLATFORM_NATS_HOST     = "127.0.0.1"
+        PLATFORM_NATS_PORT     = "4222"
+        PLATFORM_NATS_USER     = var.PLATFORM_NATS_USER
+        PLATFORM_NATS_PASSWORD = var.PLATFORM_NATS_PASSWORD
+        X_HTTP_DATABASE_URL  = var.X_HTTP_DATABASE_URL
+        X_AUTH_ACCESS_SECRET = var.X_AUTH_ACCESS_SECRET
+        X_HTTP_CACHE_TTL     = var.X_HTTP_CACHE_TTL
+        X_HEALTH_ADDR   = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
+        PLATFORM_LOG_LEVEL     = var.PLATFORM_LOG_LEVEL
       }
 
       resources {

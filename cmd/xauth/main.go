@@ -30,9 +30,9 @@ func main() {
 	log := logger.New("xauth")
 	cfg := xauth.LoadConfig(log)
 
-	healthAddr := os.Getenv("HEALTH_ADDR")
+	healthAddr := os.Getenv("X_HEALTH_ADDR")
 	if healthAddr == "" {
-		log.Fatal().Msg("HEALTH_ADDR не задан")
+		log.Fatal().Msg("X_HEALTH_ADDR не задан")
 	}
 
 	natsClient, err := nc.NewClient(cfg.NATS, log)

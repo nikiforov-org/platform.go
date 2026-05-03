@@ -20,53 +20,53 @@ variable "CHECKSUM" {
   default     = ""
 }
 
-variable "NATS_USER" {
+variable "PLATFORM_NATS_USER" {
   default = ""
 }
 
-variable "NATS_PASSWORD" {
+variable "PLATFORM_NATS_PASSWORD" {
   default = ""
 }
 
-variable "AUTH_USERNAME" {
+variable "X_AUTH_USERNAME" {
   default = ""
 }
 
-variable "AUTH_PASSWORD" {
+variable "X_AUTH_PASSWORD" {
   default = ""
 }
 
-variable "AUTH_ACCESS_SECRET" {
+variable "X_AUTH_ACCESS_SECRET" {
   description = "HMAC-ключ для подписи access JWT."
   default     = ""
 }
 
-variable "AUTH_REFRESH_SECRET" {
+variable "X_AUTH_REFRESH_SECRET" {
   default = ""
 }
 
-variable "AUTH_ACCESS_TTL" {
+variable "X_AUTH_ACCESS_TTL" {
   default = "15m"
 }
 
-variable "AUTH_REFRESH_TTL" {
+variable "X_AUTH_REFRESH_TTL" {
   default = "168h"
 }
 
-variable "COOKIE_DOMAIN" {
+variable "X_AUTH_COOKIE_DOMAIN" {
   default = ""
 }
 
-variable "COOKIE_SECURE" {
+variable "X_AUTH_COOKIE_SECURE" {
   default = "true"
 }
 
-variable "COOKIE_SAMESITE" {
+variable "X_AUTH_COOKIE_SAMESITE" {
   description = "SameSite-политика кук: strict, lax, none"
   default     = "strict"
 }
 
-variable "LOG_LEVEL" {
+variable "PLATFORM_LOG_LEVEL" {
   default = "info"
 }
 
@@ -149,21 +149,21 @@ job "xauth" {
       }
 
       env {
-        NATS_HOST           = "127.0.0.1"
-        NATS_PORT           = "4222"
-        NATS_USER           = var.NATS_USER
-        NATS_PASSWORD       = var.NATS_PASSWORD
-        AUTH_USERNAME       = var.AUTH_USERNAME
-        AUTH_PASSWORD       = var.AUTH_PASSWORD
-        AUTH_ACCESS_SECRET  = var.AUTH_ACCESS_SECRET
-        AUTH_REFRESH_SECRET = var.AUTH_REFRESH_SECRET
-        AUTH_ACCESS_TTL     = var.AUTH_ACCESS_TTL
-        AUTH_REFRESH_TTL    = var.AUTH_REFRESH_TTL
-        COOKIE_DOMAIN       = var.COOKIE_DOMAIN
-        COOKIE_SECURE       = var.COOKIE_SECURE
-        COOKIE_SAMESITE     = var.COOKIE_SAMESITE
-        HEALTH_ADDR         = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
-        LOG_LEVEL           = var.LOG_LEVEL
+        PLATFORM_NATS_HOST           = "127.0.0.1"
+        PLATFORM_NATS_PORT           = "4222"
+        PLATFORM_NATS_USER           = var.PLATFORM_NATS_USER
+        PLATFORM_NATS_PASSWORD       = var.PLATFORM_NATS_PASSWORD
+        X_AUTH_USERNAME       = var.X_AUTH_USERNAME
+        X_AUTH_PASSWORD       = var.X_AUTH_PASSWORD
+        X_AUTH_ACCESS_SECRET  = var.X_AUTH_ACCESS_SECRET
+        X_AUTH_REFRESH_SECRET = var.X_AUTH_REFRESH_SECRET
+        X_AUTH_ACCESS_TTL     = var.X_AUTH_ACCESS_TTL
+        X_AUTH_REFRESH_TTL    = var.X_AUTH_REFRESH_TTL
+        X_AUTH_COOKIE_DOMAIN       = var.X_AUTH_COOKIE_DOMAIN
+        X_AUTH_COOKIE_SECURE       = var.X_AUTH_COOKIE_SECURE
+        X_AUTH_COOKIE_SAMESITE     = var.X_AUTH_COOKIE_SAMESITE
+        X_HEALTH_ADDR         = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
+        PLATFORM_LOG_LEVEL           = var.PLATFORM_LOG_LEVEL
       }
 
       resources {

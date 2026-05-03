@@ -9,7 +9,7 @@
 # Переменные:
 #   PLATFORM_DOMAIN  — раскрывается Nomad'ом из /etc/nomad/env при старте (retry_join)
 #   NODE_IP          — подставляется bash'ом из $NODE_IP при генерации конфига (advertise rpc/serf)
-#   NOMAD_GOSSIP_KEY — раскрывается systemd из /etc/nomad/env через CLI-флаг -encrypt (server.encrypt не поддерживает env)
+#   PLATFORM_NOMAD_GOSSIP_KEY — раскрывается systemd из /etc/nomad/env через CLI-флаг -encrypt (server.encrypt не поддерживает env)
 #
 # bootstrap_expect = 1: нода сразу готова к работе.
 # server_join retry_join: при наличии других нод в DNS автоматически входит
@@ -52,7 +52,7 @@ server {
   bootstrap_expect = 1
 
   # Шифрование Serf-протокола (4648) — задаётся CLI-флагом nomad agent
-  # -encrypt=${NOMAD_GOSSIP_KEY} в systemd-юните (см. setup.sh). В HCL
+  # -encrypt=${PLATFORM_NOMAD_GOSSIP_KEY} в systemd-юните (см. setup.sh). В HCL
   # прописать нельзя: Nomad не раскрывает env-переменные в server.encrypt
   # (только в retry_join). Хранить ключ литералом в этом файле небезопасно
   # (chmod 644 < chmod 600 для /etc/nomad/env). Без шифрования: топология
@@ -110,13 +110,13 @@ telemetry {
 
 # ACL включён: все операции с API требуют токена.
 # Bootstrap-токен генерируется при первом запуске setup.sh и сохраняется
-# в GitHub Secrets как NOMAD_TOKEN.
+# в GitHub Secrets как PLATFORM_NOMAD_TOKEN.
 acl {
   enabled = true
 }
 
 # TLS для inter-node RPC (4647). Через RPC идут Raft-консенсус и job specs,
-# а в job specs — реальные секреты (NATS_PASSWORD, AUTH_ACCESS_SECRET и др.
+# а в job specs — реальные секреты (PLATFORM_NATS_PASSWORD, AUTH_ACCESS_SECRET и др.
 # через NOMAD_VAR_*). Без TLS на cross-DC через WAN всё это идёт в открытом
 # виде — атакующий с MITM собирает секреты непрерывно. См. I-H8.
 #
@@ -126,7 +126,7 @@ acl {
 #
 # verify_server_hostname = true: при исходящем RPC Nomad проверяет, что
 # cert пира содержит SAN server.global.nomad (region=global default).
-# CA-ключ хранится только в GitHub Secret NOMAD_CA_KEY; на сервере
+# CA-ключ хранится только в GitHub Secret PLATFORM_NOMAD_CA_KEY; на сервере
 # остаются только публичный ca.crt + node.crt + node.key.
 tls {
   rpc                    = true

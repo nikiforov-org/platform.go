@@ -8,10 +8,10 @@
 # Этот файл не трогать.
 #
 # Необходимые GitHub Secrets (общие, используются в *-deploy.yml):
-#   DEPLOY_SSH_KEY   — приватный SSH-ключ для подключения к серверу
-#   DEPLOY_USER      — SSH-пользователь (например: ubuntu)
+#   PLATFORM_DEPLOY_SSH_KEY   — приватный SSH-ключ для подключения к серверу
+#   PLATFORM_DEPLOY_USER      — SSH-пользователь (например: ubuntu)
 #   PLATFORM_DOMAIN  — домен A-записей кластера (например: nodes.example.com)
-#   NOMAD_TOKEN      — Nomad ACL bootstrap token
+#   PLATFORM_NOMAD_TOKEN      — Nomad ACL bootstrap token
 
 name: CI
 

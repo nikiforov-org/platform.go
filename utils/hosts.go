@@ -57,7 +57,7 @@ func ParseAllowedHosts(log zerolog.Logger, raw string) (AllowedHostSet, error) {
 // Allows проверяет, разрешён ли данный Origin.
 //
 // Правила (в порядке приоритета):
-//  1. Пустое множество (ALLOWED_HOSTS не задан) — разрешаем всё.
+//  1. Пустое множество (PLATFORM_ALLOWED_HOSTS не задан) — разрешаем всё.
 //  2. Нет заголовка Origin (curl, серверный вызов, health check) — разрешаем:
 //     Origin шлют только браузеры при кросс-доменных запросах.
 //  3. Иначе — извлекаем host из Origin и ищем его в множестве.

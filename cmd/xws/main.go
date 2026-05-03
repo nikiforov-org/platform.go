@@ -45,9 +45,9 @@ func main() {
 	log := logger.New("xws")
 	cfg := xws.LoadConfig(log)
 
-	healthAddr := os.Getenv("HEALTH_ADDR")
+	healthAddr := os.Getenv("X_HEALTH_ADDR")
 	if healthAddr == "" {
-		log.Fatal().Msg("HEALTH_ADDR не задан")
+		log.Fatal().Msg("X_HEALTH_ADDR не задан")
 	}
 
 	natsClient, err := nc.NewClient(cfg.NATS, log)
@@ -88,7 +88,7 @@ func main() {
 		}
 		mgr.Open(sid)
 		// Ack для Gateway: подтверждаем регистрацию сессии. Без ack Gateway
-		// закроет WS-соединение по таймауту (GATEWAY_WS_CONNECT_TIMEOUT).
+		// закроет WS-соединение по таймауту (PLATFORM_GATEWAY_WS_CONNECT_TIMEOUT).
 		if err := msg.Respond(nil); err != nil {
 			log.Warn().Err(err).Str("sid", sid).Msg("connect ack failed")
 		}

@@ -46,7 +46,7 @@ type AuthConfig struct {
 //
 // Middleware не делает сетевых запросов — проверка полностью локальная (HMAC + Exp).
 // Access-токен живёт недолго (обычно 15 минут), поэтому отзыв через KV не нужен.
-// Для принудительного отзыва используйте короткий AUTH_ACCESS_TTL.
+// Для принудительного отзыва используйте короткий X_AUTH_ACCESS_TTL.
 func RequireAuth(cfg AuthConfig, next nats.MsgHandler) nats.MsgHandler {
 	return func(msg *nats.Msg) {
 		token := utils.GetCookie(msg, "access_token")

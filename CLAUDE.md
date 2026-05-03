@@ -2,6 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Environment Variables Naming Convention
+
+Все переменные окружения в проекте следуют строгому соглашению о префиксах:
+
+**Платформенные переменные (префикс `PLATFORM_`):**
+- Относятся к инфраструктуре платформы: NATS, Nomad, Gateway, HTTP-сервер
+- Примеры: `PLATFORM_NATS_USER`, `PLATFORM_GATEWAY_RATE_LIMIT`, `PLATFORM_HTTP_ADDR`
+- Используются во всех окружениях (dev, prod)
+
+**X-сервисы (префикс `X_`):**
+- Относятся к демонстрационным сервисам (xauth, xhttp, xws)
+- Примеры: `X_AUTH_PASSWORD`, `X_HTTP_DATABASE_URL`, `X_WS_INACTIVITY_TIMEOUT`
+- Не являются частью платформы — только примеры использования
+
+**GitHub Secrets vs Variables:**
+- **Secrets** — криптоматериалы, пароли, токены, приватные ключи
+  - `PLATFORM_DEPLOY_SSH_KEY`, `PLATFORM_NATS_PASSWORD`, `X_AUTH_ACCESS_SECRET`
+- **Variables** — публичные настройки, домены, имена пользователей, таймауты
+  - `PLATFORM_DOMAIN`, `PLATFORM_ALLOWED_HOSTS`, `X_AUTH_USERNAME`
+
+При добавлении новой переменной:
+1. Определи категорию (платформа/X-сервис)
+2. Выбери правильный префикс (`PLATFORM_` или `X_`)
+3. Определи тип (secret/variable)
+4. Добавь во все необходимые файлы (Go config, Nomad job, workflow, документация)
+
 ## Audit status
 
 Единый рабочий файл аудита платформы: [`audit/STATUS.md`](audit/STATUS.md). Читать в начале любой сессии, связанной с правкой/разбором кода. Источник правды о состоянии открытых (`- [ ]`) и закрытых (`- [x]`) находок. Приоритет: Critical > High > Medium > Low. ID находок стабильные (`P-C1`, `I-H2`, `D-M3`, `G4` — P=platform, I=infra/CI, D=demo, G=global). После фикса — поменять чекбокс на `[x]` с пометкой даты и краткого описания, в том же файле.
@@ -69,7 +95,7 @@ go test -v -race -run TestName ./internal/services/gateway/...
 Prometheus-метрики Gateway отдаются через отдельный HTTP-эндпоинт на loopback:
 
 ```bash
-# По умолчанию — 127.0.0.1:8081 (GATEWAY_METRICS_ADDR).
+# По умолчанию — 127.0.0.1:8081 (PLATFORM_GATEWAY_METRICS_ADDR).
 curl http://127.0.0.1:8081/metrics
 ```
 
@@ -106,7 +132,7 @@ HTTP Client → Gateway (:80) → NATS (:4222) → [xhttp | xauth | xws]
 
 Middleware chain for `/v1/`: `Origin` → `RateLimit` → route.
 
-Rate limiting (`internal/services/gateway/ratelimit.go`): per-IP general limit (`GATEWAY_RATE_LIMIT`, default 100 req/s) applies to all routes; optional stricter per-IP auth limit (`GATEWAY_AUTH_RATE_LIMIT`, default 5 req/s) applies to a configurable URL prefix (`GATEWAY_AUTH_RATE_PREFIX`, default empty — disabled); global WS connection counter (`GATEWAY_MAX_WS_CONNS`, default 1000).
+Rate limiting (`internal/services/gateway/ratelimit.go`): per-IP general limit (`PLATFORM_GATEWAY_RATE_LIMIT`, default 100 req/s) applies to all routes; optional stricter per-IP auth limit (`PLATFORM_GATEWAY_AUTH_RATE_LIMIT`, default 5 req/s) applies to a configurable URL prefix (`PLATFORM_GATEWAY_AUTH_RATE_PREFIX`, default empty — disabled); global WS connection counter (`PLATFORM_GATEWAY_MAX_WS_CONNS`, default 1000).
 
 It has no database dependency.
 
@@ -132,7 +158,7 @@ It has no database dependency.
 - `internal/middleware/xauth.go` — `RequireAuth` middleware for NATS message handlers (validates JWT from cookie header)
 - `utils/reply.go` — NATS response helpers (JSON envelope format)
 - `utils/env.go` — Generic `GetEnv[T]()` for environment variable parsing
-- `utils/hosts.go` — CORS origin validation against `ALLOWED_HOSTS`
+- `utils/hosts.go` — CORS origin validation against `PLATFORM_ALLOWED_HOSTS`
 
 ### Database
 
@@ -148,19 +174,19 @@ All configuration is loaded from environment variables only. Each service has a 
 
 | Service | Required Env Vars |
 |---------|-------------------|
-| xhttp   | `DATABASE_URL`, `AUTH_ACCESS_SECRET` |
-| xauth   | `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_ACCESS_SECRET`, `AUTH_REFRESH_SECRET` |
-| gateway | `ALLOWED_HOSTS` (comma-separated origins, e.g. `localhost:3000,example.com`) |
+| xhttp   | `X_HTTP_DATABASE_URL`, `X_AUTH_ACCESS_SECRET` |
+| xauth   | `X_AUTH_USERNAME`, `X_AUTH_PASSWORD`, `X_AUTH_ACCESS_SECRET`, `X_AUTH_REFRESH_SECRET` |
+| gateway | `PLATFORM_ALLOWED_HOSTS` (comma-separated origins, e.g. `localhost:3000,example.com`) |
 
-All services share `NATS_HOST` (default `127.0.0.1`), `NATS_PORT` (default `4222`), `NATS_USER`, `NATS_PASSWORD`, `LOG_LEVEL` (default `info`; values: `debug`, `info`, `warn`, `error`).
+All services share `PLATFORM_NATS_HOST` (default `127.0.0.1`), `PLATFORM_NATS_PORT` (default `4222`), `PLATFORM_NATS_USER`, `PLATFORM_NATS_PASSWORD`, `PLATFORM_LOG_LEVEL` (default `info`; values: `debug`, `info`, `warn`, `error`).
 
-Gateway ретраит NATS-запросы при `ErrNoResponders` (нет живых подписчиков) в пределах `GATEWAY_NATS_REQUEST_TIMEOUT`, с паузой `GATEWAY_NATS_RETRY_DELAY` (default `100ms`) между попытками. Это закрывает короткое окно при перетасовке копий сервиса на другой ноде; прочие ошибки возвращаются клиенту без повторов.
+Gateway ретраит NATS-запросы при `ErrNoResponders` (нет живых подписчиков) в пределах `PLATFORM_GATEWAY_NATS_REQUEST_TIMEOUT`, с паузой `PLATFORM_GATEWAY_NATS_RETRY_DELAY` (default `100ms`) между попытками. Это закрывает короткое окно при перетасовке копий сервиса на другой ноде; прочие ошибки возвращаются клиенту без повторов.
 
 `NATS_KV_REPLICAS` не задаётся — платформа определяет число реплик автоматически по размеру кластера (`len(conn.Servers())`) после подключения к NATS.
 
 **Important dev-only overrides:**
-- `COOKIE_SECURE=false` — production default is `true` (HTTPS); local HTTP dev requires `false` or browsers won't send auth cookies
-- `AUTH_ACCESS_SECRET` is shared between xauth and xhttp — same HMAC key, same env var name
+- `X_AUTH_COOKIE_SECURE=false` — production default is `true` (HTTPS); local HTTP dev requires `false` or browsers won't send auth cookies
+- `X_AUTH_ACCESS_SECRET` is shared between xauth and xhttp — same HMAC key, same env var name
 
 ## Deployment
 
@@ -169,7 +195,7 @@ Services are deployed via **Nomad with raw exec driver** (no Docker). Each node 
 CI/CD flow:
 - **Auto-deploy**: push to `main` → `ci.yml` runs build/vet/test → if pass, builds release binaries, creates GitHub pre-release (`build-N`), SSHes to prod server, runs `git pull` + `nomad job run`. All secrets come from GitHub Secrets (never from files on disk).
 - **Versioned release**: push tag `v*` → `release.yml` creates a stable GitHub Release for manual/rollback deploys.
-- **VPS setup**: single command on the new server — `wget | PLATFORM_DOMAIN=... NATS_USER=... bash`. Script auto-detects IP, configures swap, installs Nomad+NATS, sets up systemd+firewall, auto-joins cluster via DNS. Same command for first node and any subsequent node.
+- **VPS setup**: single command on the new server — `wget | PLATFORM_DOMAIN=... PLATFORM_NATS_USER=... bash`. Script auto-detects IP, configures swap, installs Nomad+NATS, sets up systemd+firewall, auto-joins cluster via DNS. Same command for first node and any subsequent node.
 
 Rollback: set `version = "build-N"` (or `v1.2.3`) in `prod.vars` and run `nomad job run` manually.
 
@@ -184,9 +210,9 @@ Key Nomad behaviors:
 
 **Any binary as a service:** Nomad's `raw_exec` driver runs any static Linux binary — Go, Rust, or any language with static linking. The binary connects to local NATS on `127.0.0.1:4222`, subscribes to subjects, and becomes a full platform participant. It does not have to be built by this repo's CI — any URL with a checksum in the `artifact {}` block works. Docker is not required and not installed.
 
-**Single cluster, multi-DC:** the platform runs as one Nomad+NATS cluster; nodes can span multiple datacenters. `raft_multiplier=5` accommodates WAN latency. Inter-node traffic is encrypted end-to-end: NATS cluster (6222) via mTLS (`NATS_CA_KEY`/`NATS_CA_CERT`), Nomad RPC (4647) via TLS (`NOMAD_CA_KEY`/`NOMAD_CA_CERT`), Nomad Serf gossip (4648) via symmetric key (`NOMAD_GOSSIP_KEY`).
+**Single cluster, multi-DC:** the platform runs as one Nomad+NATS cluster; nodes can span multiple datacenters. `raft_multiplier=5` accommodates WAN latency. Inter-node traffic is encrypted end-to-end: NATS cluster (6222) via mTLS (`PLATFORM_NATS_CA_KEY`/`PLATFORM_NATS_CA_CERT`), Nomad RPC (4647) via TLS (`PLATFORM_NOMAD_CA_KEY`/`PLATFORM_NOMAD_CA_CERT`), Nomad Serf gossip (4648) via symmetric key (`PLATFORM_NOMAD_GOSSIP_KEY`).
 
-**Multiple isolated clusters** (separate products/tenants): each cluster needs its own `PLATFORM_DOMAIN` (Nomad `retry_join` boundary), its own `NATS_CA_KEY`/`NATS_CA_CERT` (NATS mTLS isolation), and its own `NOMAD_CA_KEY`/`NOMAD_CA_CERT`/`NOMAD_GOSSIP_KEY` (Nomad TLS+Serf isolation). Nodes with different CA certs cannot establish cross-cluster connections — CA-pair separation is the security boundary. The same `setup.sh` is used for every cluster, only the variable values differ.
+**Multiple isolated clusters** (separate products/tenants): each cluster needs its own `PLATFORM_DOMAIN` (Nomad `retry_join` boundary), its own `PLATFORM_NATS_CA_KEY`/`PLATFORM_NATS_CA_CERT` (NATS mTLS isolation), and its own `PLATFORM_NOMAD_CA_KEY`/`PLATFORM_NOMAD_CA_CERT`/`PLATFORM_NOMAD_GOSSIP_KEY` (Nomad TLS+Serf isolation). Nodes with different CA certs cannot establish cross-cluster connections — CA-pair separation is the security boundary. The same `setup.sh` is used for every cluster, only the variable values differ.
 
 Nomad configs: `deployments/infra/nomad/nomad.hcl` (agent), `deployments/infra/nomad/platform.nomad` (platform job), `deployments/infra/nomad/xservices.nomad` (demo services job).
 
