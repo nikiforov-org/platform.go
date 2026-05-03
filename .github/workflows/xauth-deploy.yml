@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Download checksums
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: checksums
           run-id: ${{ github.event.workflow_run.id }}
