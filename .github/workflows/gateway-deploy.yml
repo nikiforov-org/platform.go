@@ -41,7 +41,7 @@ jobs:
       PLATFORM_GATEWAY_TRUSTED_PROXY:    ${{ vars.PLATFORM_GATEWAY_TRUSTED_PROXY }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Download checksums
         uses: actions/download-artifact@v8

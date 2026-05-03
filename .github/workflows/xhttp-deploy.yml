@@ -42,7 +42,7 @@ jobs:
       X_HTTP_CACHE_TTL:         ${{ vars.X_HTTP_CACHE_TTL || '30s' }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Download checksums
         uses: actions/download-artifact@v8

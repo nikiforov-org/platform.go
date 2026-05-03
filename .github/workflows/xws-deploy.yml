@@ -37,7 +37,7 @@ jobs:
       X_WS_INACTIVITY_TIMEOUT:  ${{ vars.X_WS_INACTIVITY_TIMEOUT || '3m' }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Download checksums
         uses: actions/download-artifact@v8
