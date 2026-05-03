@@ -184,7 +184,7 @@ runs:
           # изменении топологии кластера следующий деплой сам подхватит новое значение.
           NODES_EXPORT=""
           if echo "$DECLARED" | grep -qx NODES; then
-            NODES_EXPORT='NOMAD_VAR_NODES=$(curl -sf -H "X-Nomad-Token: $NOMAD_TOKEN" http://127.0.0.1:4646/v1/nodes | jq '"'"'[.[] | select(.Status=="ready")] | length'"'"' || echo 1); export NOMAD_VAR_NODES'
+            NODES_EXPORT='NOMAD_VAR_NODES=$(curl -sf -H "X-Nomad-Token: $NOMAD_TOKEN" http://127.0.0.1:4646/v1/nodes | jq '"'"'[.[] | select(.Status=="ready")] | length'"'"'); NOMAD_VAR_NODES=${NOMAD_VAR_NODES:-1}; export NOMAD_VAR_NODES'
           fi
 
           REMOTE_SCRIPT="
