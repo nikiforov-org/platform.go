@@ -28,6 +28,8 @@ jobs:
   cleanup:
     name: Delete old workflow runs
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
 
     steps:
       - name: Cleanup

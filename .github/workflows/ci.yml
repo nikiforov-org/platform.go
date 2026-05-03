@@ -149,7 +149,9 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.value }}
           prerelease: true
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/checksums.env
           generate_release_notes: true
 
       - name: Cleanup old pre-releases
