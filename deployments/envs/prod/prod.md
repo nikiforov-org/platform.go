@@ -464,7 +464,8 @@ jobs:
 | Secret          | Как получить | Описание |
 |-----------------|--------------|----------|
 | `DATABASE_URL`  | от PostgreSQL-провайдера | DSN: `postgres://user:pass@host:5432/db?sslmode=require` |
-| `ACCESS_SECRET` | = значение `AUTH_ACCESS_SECRET` | HMAC-ключ валидации JWT. **Должен совпадать с `AUTH_ACCESS_SECRET`** |
+
+`AUTH_ACCESS_SECRET` общий с xauth — отдельного секрета не нужно.
 
 #### xws — демо-сервис (`xws-deploy.yml`)
 
@@ -535,7 +536,7 @@ rm deploy_key deploy_key.pub
 
 Сгенерировать HMAC-ключи:
 ```bash
-openssl rand -hex 32  # AUTH_ACCESS_SECRET (= ACCESS_SECRET в xhttp)
+openssl rand -hex 32  # AUTH_ACCESS_SECRET (общий для xauth и xhttp)
 openssl rand -hex 32  # AUTH_REFRESH_SECRET
 ```
 

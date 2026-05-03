@@ -33,8 +33,8 @@ variable "DATABASE_URL" {
   default     = ""
 }
 
-variable "ACCESS_SECRET" {
-  description = "HMAC-ключ для валидации access JWT. Должен совпадать с AUTH_ACCESS_SECRET в xauth."
+variable "AUTH_ACCESS_SECRET" {
+  description = "HMAC-ключ подписи/валидации access JWT. Общий с сервисом xauth."
   default     = ""
 }
 
@@ -127,7 +127,7 @@ job "xhttp" {
         NATS_USER     = var.NATS_USER
         NATS_PASSWORD = var.NATS_PASSWORD
         DATABASE_URL  = var.DATABASE_URL
-        ACCESS_SECRET = var.ACCESS_SECRET
+        AUTH_ACCESS_SECRET = var.AUTH_ACCESS_SECRET
         CACHE_TTL     = var.CACHE_TTL
         HEALTH_ADDR   = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
         LOG_LEVEL     = var.LOG_LEVEL

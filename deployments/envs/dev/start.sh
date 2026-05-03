@@ -577,7 +577,7 @@ job "xhttp" {
         NATS_USER     = "$nats_user"
         NATS_PASSWORD = "$nats_password"
         DATABASE_URL  = "$database_url"
-        ACCESS_SECRET = "$access_secret"
+        AUTH_ACCESS_SECRET = "$auth_access_secret"
         CACHE_TTL     = "${cache_ttl:-30s}"
         HEALTH_ADDR   = "\${NOMAD_IP_health}:\${NOMAD_PORT_health}"
         LOG_LEVEL     = "$log_level"

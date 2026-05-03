@@ -101,7 +101,6 @@ rm deploy_key deploy_key.pub nats-ca.key nats-ca.crt nomad-ca.key nomad-ca.crt
 | `AUTH_REFRESH_SECRET` | Вывод `openssl rand -hex 32` |
 | `COOKIE_DOMAIN` | Домен для cookie с точкой: `.example.com` |
 | `DATABASE_URL` | Строка подключения PostgreSQL: `postgres://user:pass@host:5432/db?sslmode=require` |
-| `ACCESS_SECRET` | То же значение что `AUTH_ACCESS_SECRET` |
 
 ---
 

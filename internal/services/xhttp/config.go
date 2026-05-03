@@ -20,7 +20,7 @@ import (
 //	NATS_USER         — логин авторизации       ("")
 //	NATS_PASSWORD     — пароль авторизации      ("")
 //	DATABASE_URL   — DSN PostgreSQL      (обязательно)
-//	ACCESS_SECRET  — HMAC-ключ JWT       (обязательно, должен совпадать с AUTH_ACCESS_SECRET сервиса xauth)
+//	AUTH_ACCESS_SECRET  — HMAC-ключ JWT       (обязательно, общий с сервисом xauth)
 //	CACHE_TTL         — TTL кэша                ("30s")
 type Config struct {
 	NATS         nc.Config
@@ -35,11 +35,9 @@ func LoadConfig(log zerolog.Logger) Config {
 	if dbURL == "" {
 		log.Fatal().Str("key", "DATABASE_URL").Msg("обязательная переменная окружения не задана")
 	}
-	// Fail-fast: пустой HMAC-ключ принял бы любой токен, подписанный таким же
-	// пустым ключом. Должен совпадать с AUTH_ACCESS_SECRET сервиса xauth.
-	accessSecret := os.Getenv("ACCESS_SECRET")
+	accessSecret := os.Getenv("AUTH_ACCESS_SECRET")
 	if accessSecret == "" {
-		log.Fatal().Str("key", "ACCESS_SECRET").Msg("обязательная переменная окружения не задана")
+		log.Fatal().Str("key", "AUTH_ACCESS_SECRET").Msg("обязательная переменная окружения не задана")
 	}
 
 	natsCfg := nc.DefaultConfig()

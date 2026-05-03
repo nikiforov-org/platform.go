@@ -7,7 +7,7 @@
 #   HOST_FINGERPRINTS  — SHA256 host keys прод-нод (см. action.yml)
 #   NATS_USER, NATS_PASSWORD
 #   DATABASE_URL   — PostgreSQL DSN (postgres://user:pass@host:5432/db?sslmode=require)
-#   ACCESS_SECRET  — HMAC-ключ валидации JWT; должен совпадать с AUTH_ACCESS_SECRET в xauth
+#   AUTH_ACCESS_SECRET — HMAC-ключ access JWT (общий с xauth)
 #
 # GitHub Variables (необязательные):
 #   CACHE_TTL  — по умолчанию 30s
@@ -34,7 +34,7 @@ jobs:
       NATS_USER:       ${{ secrets.NATS_USER }}
       NATS_PASSWORD:   ${{ secrets.NATS_PASSWORD }}
       DATABASE_URL:    ${{ secrets.DATABASE_URL }}
-      ACCESS_SECRET:   ${{ secrets.ACCESS_SECRET }}
+      AUTH_ACCESS_SECRET: ${{ secrets.AUTH_ACCESS_SECRET }}
       CACHE_TTL:       ${{ vars.CACHE_TTL || '30s' }}
 
     steps:

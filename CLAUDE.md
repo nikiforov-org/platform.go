@@ -148,7 +148,7 @@ All configuration is loaded from environment variables only. Each service has a 
 
 | Service | Required Env Vars |
 |---------|-------------------|
-| xhttp   | `DATABASE_URL` |
+| xhttp   | `DATABASE_URL`, `AUTH_ACCESS_SECRET` |
 | xauth   | `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_ACCESS_SECRET`, `AUTH_REFRESH_SECRET` |
 | gateway | `ALLOWED_HOSTS` (comma-separated origins, e.g. `localhost:3000,example.com`) |
 
@@ -160,7 +160,7 @@ Gateway ретраит NATS-запросы при `ErrNoResponders` (нет жи
 
 **Important dev-only overrides:**
 - `COOKIE_SECURE=false` — production default is `true` (HTTPS); local HTTP dev requires `false` or browsers won't send auth cookies
-- `ACCESS_SECRET` in xhttp/xws must equal `AUTH_ACCESS_SECRET` in xauth — they share the same HMAC key
+- `AUTH_ACCESS_SECRET` is shared between xauth and xhttp — same HMAC key, same env var name
 
 ## Deployment
 
