@@ -205,7 +205,7 @@ runs:
 
             exec 10>/var/lock/platform-nomad-${NOMAD_FILE}.lock
             flock -w 300 -x 10 || { echo 'platform-nomad-${NOMAD_FILE}: lock busy >300s, aborting'; exit 1; }
-            sudo -E nomad job run /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
+            sudo -E nomad job run -token=\"\$NOMAD_TOKEN\" /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
           "
 
           # Скрипт уходит на remote через SSH stdin (here-string + bash -s),
