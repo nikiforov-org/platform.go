@@ -184,7 +184,7 @@ build_binaries() {
 #
 # Каждая Nomad-нода сидит на своём адресе 127.0.0.N. Это нужно чтобы gateway
 # мог запускаться с `type = "system"` (как в проде — по одному на ноду) и не
-# получать «адрес уже занят» на общем 127.0.0.1:8080.
+# получать «адрес уже занят» на общем 127.0.0.1:80.
 #
 # На Linux адреса 127.0.0.2..127.0.0.N работают из коробки (loopback /8).
 # На macOS их нужно добавлять вручную через ifconfig — скрипт делает это сам,
@@ -266,8 +266,8 @@ client {
 
   # host_network «node» привязана к конкретному loopback-адресу этой ноды.
   # Порты аллокаций с host_network="node" резолвятся именно в этот адрес,
-  # благодаря чему gateway (static=8080) может запускаться на всех нодах
-  # одновременно — каждый биндит свой 127.0.0.N:8080.
+  # благодаря чему gateway (static=80) может запускаться на всех нодах
+  # одновременно — каждый биндит свой 127.0.0.N:80.
   host_network "node" {
     cidr = "$addr/32"
   }
@@ -356,7 +356,7 @@ job "gateway" {
   datacenters = ["dc1"]
   # type = "system" — один экземпляр на каждую Nomad-ноду. Синхронизировано
   # с deployments/infra/nomad/gateway.nomad. В multi-node dev работает за счёт
-  # loopback-алиасов: каждая нода на своём 127.0.0.N, конфликта на :8080 нет.
+  # loopback-алиасов: каждая нода на своём 127.0.0.N, конфликта на :80 нет.
   type        = "system"
 
   update {
@@ -370,7 +370,7 @@ job "gateway" {
   group "gateway" {
     network {
       port "http" {
-        static       = 8080
+        static       = 80
         host_network = "node"
       }
     }
@@ -400,7 +400,7 @@ job "gateway" {
         NATS_PORT                = "$nats_host_port"
         NATS_USER                = "$nats_user"
         NATS_PASSWORD            = "$nats_password"
-        HTTP_ADDR                = "\${NOMAD_IP_http}:8080"
+        HTTP_ADDR                = "\${NOMAD_IP_http}:80"
         ALLOWED_HOSTS            = "$allowed_hosts"
         GATEWAY_AUTH_RATE_PREFIX = "$gateway_auth_rate_prefix"
         LOG_LEVEL                = "$log_level"
@@ -690,7 +690,7 @@ print_status() {
     nomad job status "$job" 2>/dev/null | grep -E "^(ID|Status)" | head -2 || true
   done
   echo ""
-  info "Gateway:    http://localhost:8080"
+  info "Gateway:    http://localhost:80"
   info "Nomad UI:   http://localhost:4646"
   info "NATS:       http://localhost:8222"
   echo ""
@@ -703,7 +703,7 @@ print_status() {
 # Когда Nomad-агент убит через `kill` (ручная симуляция падения ноды) или
 # аварийно — его дочерние таски (бинарники сервисов и их executor'ы) остаются
 # работать под init. Следующий старт пытается поднять новый gateway, который
-# не может занять тот же 127.0.0.N:8080 — уходит в цикл рестарта.
+# не может занять тот же 127.0.0.N:80 — уходит в цикл рестарта.
 # =============================================================================
 cleanup_orphans() {
   local killed=0

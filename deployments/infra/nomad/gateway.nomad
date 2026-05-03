@@ -75,7 +75,7 @@ job "gateway" {
   group "gateway" {
     network {
       port "http" {
-        static = 8080
+        static = 80
       }
     }
 
@@ -88,7 +88,7 @@ job "gateway" {
 
     task "gateway" {
       driver       = "raw_exec"
-      user         = "nomad" # I-H6: task от непривилегированного user'а, не от root
+      user         = "root" # Порт 80 требует привилегий для bind
       kill_timeout = "30s"
 
       logs {
@@ -114,7 +114,7 @@ job "gateway" {
         NATS_PORT                = "4222"
         NATS_USER                = var.NATS_USER
         NATS_PASSWORD            = var.NATS_PASSWORD
-        HTTP_ADDR                = ":8080"
+        HTTP_ADDR                = ":80"
         ALLOWED_HOSTS            = var.ALLOWED_HOSTS
         GATEWAY_AUTH_RATE_PREFIX = var.GATEWAY_AUTH_RATE_PREFIX
         GATEWAY_TRUSTED_PROXY    = var.GATEWAY_TRUSTED_PROXY
