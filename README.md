@@ -21,7 +21,7 @@
 
 **3. Прикладной слой (Go)**
 
-**3.1. API Gateway (Go): HTTP-to-NATS Bridge (Port 8080)**
+**3.1. API Gateway (Go): HTTP-to-NATS Bridge (Port 80)**
 - Единственная точка входа. Принимает HTTP-запросы напрямую от Managed Load Balancer.
 - Выполняет nc.Request() в шину NATS и возвращает ответ клиенту.
 - Stateless: не хранит состояние, развернут на каждой ноде.
@@ -105,7 +105,7 @@ npm install
 npm run dev      # http://localhost:5173
 ```
 
-По умолчанию фронт ходит относительными путями через Vite dev-proxy на Gateway (`http://localhost:8080`), поэтому HttpOnly-куки работают без CORS. Переменная `VITE_GATEWAY_URL` (`.env`) позволяет указать абсолютный URL Gateway — тогда фронт ходит напрямую (CORS на стороне Gateway не реализован, для этого режима нужен reverse-proxy). Допустимые origin'ы в `deployments/envs/dev/dev.vars` уже включают `localhost:5173`.
+По умолчанию фронт ходит относительными путями через Vite dev-proxy на Gateway (`http://localhost`), поэтому HttpOnly-куки работают без CORS. Переменная `VITE_GATEWAY_URL` (`.env`) позволяет указать абсолютный URL Gateway — тогда фронт ходит напрямую (Gateway отдаёт CORS-заголовки для origin'ов из `ALLOWED_HOSTS`). Допустимые origin'ы в `deployments/envs/dev/dev.vars` уже включают `localhost:5173`.
 
 ## Схема CI/CD (GitHub Actions)
 
@@ -128,7 +128,7 @@ npm run dev      # http://localhost:5173
 | 6222 | TCP | Кластеризация NATS (между узлами) |
 | 4646 | TCP | Nomad HTTP API (только loopback; внешний доступ через SSH-tunnel) |
 | 4647-4648 | TCP/UDP |	Внутренний трафик Nomad (RPC/Serf) |
-| 8080 | TCP | Внешний HTTP трафик (API Gateway) |
+| 80 | TCP | Внешний HTTP трафик (API Gateway) |
 
 ## Рекомендации по эксплуатации
 

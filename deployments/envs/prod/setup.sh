@@ -604,7 +604,7 @@ setup_firewall() {
   ufw default allow outgoing
 
   ufw allow 22/tcp   comment 'SSH'
-  ufw allow 8080/tcp comment 'Gateway HTTP'
+  ufw allow 80/tcp comment 'Gateway HTTP'
 
   # Межнодовые порты (ограничьте диапазоном IP нод в production).
   # Nomad HTTP API (4646) слушает только на 127.0.0.1 (см. nomad.hcl/addresses) —
@@ -635,7 +635,7 @@ start_services() {
   # сервер готов принимать запросы. Таймаут 60s рассчитан на тяжёлый recovery
   # (большой /var/lib/nats/jetstream).
   # Адрес 127.0.0.1:8222 = `http:` в deployments/infra/nats/nats.conf. При
-  # смене там — синхронизировать здесь (та же convention, что для 4222/6222/8080).
+  # смене там — синхронизировать здесь (та же convention, что для 4222/6222/80).
   log "Ожидание готовности NATS (JetStream recovery)..."
   local elapsed=0
   until curl -sf --max-time 2 "http://127.0.0.1:8222/healthz" &>/dev/null; do

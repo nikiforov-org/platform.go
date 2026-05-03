@@ -57,7 +57,7 @@ variable "LOG_LEVEL" {
 
 job "gateway" {
   datacenters = ["dc1"]
-  # type = "system" — один alloc на каждую client-ноду. Static port :8080 +
+  # type = "system" — один alloc на каждую client-ноду. Static port :80 +
   # DNS RR через PLATFORM_DOMAIN требуют gateway на всех нодах: при count=1
   # N-1 нод отвечали бы connection refused. Rolling update идёт по одной ноде
   # за раз (max_parallel=1) — окно недоступности только на обновляемой,

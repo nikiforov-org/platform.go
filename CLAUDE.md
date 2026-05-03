@@ -96,7 +96,7 @@ The platform-layer code (Gateway, `internal/platform/nc`, `internal/middleware`,
 This is a **microservices platform** where all inter-service communication runs over NATS Pub/Sub. The traffic flow is:
 
 ```
-HTTP Client → Gateway (:8080) → NATS (:4222) → [xhttp | xauth | xws]
+HTTP Client → Gateway (:80) → NATS (:4222) → [xhttp | xauth | xws]
 ```
 
 **Gateway** (`internal/services/gateway/`) is the sole HTTP entry point. Routes:

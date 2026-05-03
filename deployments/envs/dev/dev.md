@@ -29,7 +29,7 @@
 
 | Сервис       | Адрес                         |
 |--------------|-------------------------------|
-| Gateway      | http://localhost:8080         |
+| Gateway      | http://localhost               |
 | Nomad UI     | http://localhost:4646         |
 | NATS Monitor | http://localhost:8222         |
 
@@ -41,7 +41,7 @@ nomad job status xws         # демо
 nomad alloc logs <alloc-id>  # логи конкретной аллокации
 ```
 
-Health check: `curl http://localhost:8080/health`
+Health check: `curl http://localhost/health`
 
 ## Переменные окружения
 
