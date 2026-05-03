@@ -6,9 +6,10 @@
 #   DEPLOY_SSH_KEY, DEPLOY_USER, PLATFORM_DOMAIN, NOMAD_TOKEN  — общие
 #   HOST_FINGERPRINTS         — SHA256 host keys прод-нод (см. action.yml)
 #   NATS_USER, NATS_PASSWORD
-#   ALLOWED_HOSTS             — разрешённые HTTP Origin (через запятую)
 #   GATEWAY_AUTH_RATE_PREFIX  — URL-префикс жёсткого rate limit
 #   GATEWAY_TRUSTED_PROXY     — IP доверенного прокси/LB
+# GitHub Variables:
+#   ALLOWED_HOSTS             — разрешённые HTTP Origin (через запятую)
 
 name: Deploy gateway
 
@@ -31,7 +32,7 @@ jobs:
       HOST_FINGERPRINTS:        ${{ secrets.HOST_FINGERPRINTS }}
       NATS_USER:                ${{ secrets.NATS_USER }}
       NATS_PASSWORD:            ${{ secrets.NATS_PASSWORD }}
-      ALLOWED_HOSTS:            ${{ secrets.ALLOWED_HOSTS }}
+      ALLOWED_HOSTS:            ${{ vars.ALLOWED_HOSTS }}
       GATEWAY_AUTH_RATE_PREFIX: ${{ secrets.GATEWAY_AUTH_RATE_PREFIX }}
       GATEWAY_TRUSTED_PROXY:    ${{ secrets.GATEWAY_TRUSTED_PROXY }}
 

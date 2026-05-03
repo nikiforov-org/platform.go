@@ -151,22 +151,37 @@ func (gw *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
 // невалидные subject-токены. Whitelist предотвращает инъекцию в маршрутизацию.
 var validSubjectToken = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// middlewareOrigin проверяет заголовок Origin для входящих HTTP-запросов.
+// middlewareOrigin проверяет заголовок Origin и выставляет CORS-заголовки.
 //
-// WebSocket-соединения дополнительно проверяются через upgrader.CheckOrigin,
-// но middleware перехватывает запрос раньше апгрейда — невалидный Origin
-// не доходит до логики WS-обработчика.
-//
-// Запросы без Origin (curl, серверные вызовы, health checks) пропускаются:
-// Origin шлют только браузеры при кросс-доменных запросах.
+// Запросы без Origin (curl, серверные вызовы) пропускаются без CORS-заголовков.
+// Preflight (OPTIONS) отвечается сразу — не доходит до rate limit и роутинга.
 func (gw *Gateway) middlewareOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && !gw.allowedHosts.Allows(gw.log, origin) {
+		if origin == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !gw.allowedHosts.Allows(gw.log, origin) {
 			gw.log.Warn().Str("origin", origin).Str("method", r.Method).Str("path", r.URL.Path).Msg("отклонён Origin")
 			http.Error(w, "origin not allowed", http.StatusForbidden)
 			return
 		}
+
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Request-Id")
+		w.Header().Set("Vary", "Origin")
+
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
