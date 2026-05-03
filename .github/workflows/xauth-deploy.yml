@@ -15,6 +15,7 @@
 #   AUTH_ACCESS_TTL   — по умолчанию 15m
 #   AUTH_REFRESH_TTL  — по умолчанию 168h
 #   COOKIE_SECURE     — по умолчанию true
+#   COOKIE_SAMESITE   — по умолчанию strict (strict|lax|none)
 
 name: Deploy xauth
 
@@ -43,6 +44,7 @@ jobs:
       AUTH_REFRESH_SECRET: ${{ secrets.AUTH_REFRESH_SECRET }}
       COOKIE_DOMAIN:      ${{ secrets.COOKIE_DOMAIN }}
       COOKIE_SECURE:      ${{ vars.COOKIE_SECURE || 'true' }}
+      COOKIE_SAMESITE:    ${{ vars.COOKIE_SAMESITE || 'strict' }}
       AUTH_ACCESS_TTL:    ${{ vars.AUTH_ACCESS_TTL || '15m' }}
       AUTH_REFRESH_TTL:   ${{ vars.AUTH_REFRESH_TTL || '168h' }}
 

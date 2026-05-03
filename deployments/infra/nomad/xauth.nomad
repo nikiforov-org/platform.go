@@ -61,6 +61,11 @@ variable "COOKIE_SECURE" {
   default = "true"
 }
 
+variable "COOKIE_SAMESITE" {
+  description = "SameSite-политика кук: strict, lax, none"
+  default     = "strict"
+}
+
 variable "LOG_LEVEL" {
   default = "info"
 }
@@ -156,6 +161,7 @@ job "xauth" {
         AUTH_REFRESH_TTL    = var.AUTH_REFRESH_TTL
         COOKIE_DOMAIN       = var.COOKIE_DOMAIN
         COOKIE_SECURE       = var.COOKIE_SECURE
+        COOKIE_SAMESITE     = var.COOKIE_SAMESITE
         HEALTH_ADDR         = "${NOMAD_IP_health}:${NOMAD_PORT_health}"
         LOG_LEVEL           = var.LOG_LEVEL
       }

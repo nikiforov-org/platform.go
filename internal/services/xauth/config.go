@@ -2,7 +2,9 @@
 package xauth
 
 import (
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"platform/internal/platform/nc"
@@ -27,16 +29,29 @@ import (
 //	AUTH_REFRESH_TTL     — время жизни refresh-токена        ("168h")
 //	COOKIE_DOMAIN        — домен кук                         ("")
 //	COOKIE_SECURE        — флаг Secure на куках              ("true")
+//	COOKIE_SAMESITE      — SameSite-политика кук             ("strict")
 type Config struct {
-	NATS          nc.Config
-	Username      string
-	Password      string
-	AccessSecret  []byte
-	RefreshSecret []byte
-	AccessTTL     time.Duration
-	RefreshTTL    time.Duration
-	CookieDomain  string
-	CookieSecure  bool
+	NATS            nc.Config
+	Username        string
+	Password        string
+	AccessSecret    []byte
+	RefreshSecret   []byte
+	AccessTTL       time.Duration
+	RefreshTTL      time.Duration
+	CookieDomain    string
+	CookieSecure    bool
+	CookieSameSite  http.SameSite
+}
+
+func parseSameSite(s string) http.SameSite {
+	switch strings.ToLower(s) {
+	case "none":
+		return http.SameSiteNoneMode
+	case "lax":
+		return http.SameSiteLaxMode
+	default:
+		return http.SameSiteStrictMode
+	}
 }
 
 // LoadConfig читает конфигурацию из переменных окружения.
@@ -68,7 +83,8 @@ func LoadConfig(log zerolog.Logger) Config {
 		RefreshSecret: []byte(mustEnv("AUTH_REFRESH_SECRET")),
 		AccessTTL:     utils.GetEnv(log, "AUTH_ACCESS_TTL", 15*time.Minute),
 		RefreshTTL:    utils.GetEnv(log, "AUTH_REFRESH_TTL", 168*time.Hour),
-		CookieDomain:  utils.GetEnv(log, "COOKIE_DOMAIN", ""),
-		CookieSecure:  utils.GetEnv(log, "COOKIE_SECURE", true),
+		CookieDomain:   utils.GetEnv(log, "COOKIE_DOMAIN", ""),
+		CookieSecure:   utils.GetEnv(log, "COOKIE_SECURE", true),
+		CookieSameSite: parseSameSite(utils.GetEnv(log, "COOKIE_SAMESITE", "strict")),
 	}
 }

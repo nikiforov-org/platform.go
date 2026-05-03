@@ -38,7 +38,8 @@ func GetCookie(msg *nats.Msg, name string) string {
 //   - domain       — домен; пустая строка означает текущий домен запроса
 //   - maxAge       — время жизни в секундах; -1 удаляет куку немедленно
 //   - secure       — выставить флаг Secure (только HTTPS)
-func BuildSetCookie(name, value, domain string, maxAge int, secure bool) string {
+//   - sameSite     — политика SameSite (http.SameSiteStrictMode, NoneMode и т.д.)
+func BuildSetCookie(name, value, domain string, maxAge int, secure bool, sameSite http.SameSite) string {
 	c := &http.Cookie{
 		Name:     name,
 		Value:    value,
@@ -47,7 +48,7 @@ func BuildSetCookie(name, value, domain string, maxAge int, secure bool) string 
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   secure,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: sameSite,
 	}
 	return c.String()
 }

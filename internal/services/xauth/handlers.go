@@ -145,8 +145,8 @@ func (h *Handlers) HandleLogout(msg *nats.Msg) {
 		}
 	}
 
-	clearAccess := utils.BuildSetCookie("access_token", "", h.cfg.CookieDomain, -1, h.cfg.CookieSecure)
-	clearRefresh := utils.BuildSetCookie("refresh_token", "", h.cfg.CookieDomain, -1, h.cfg.CookieSecure)
+	clearAccess := utils.BuildSetCookie("access_token", "", h.cfg.CookieDomain, -1, h.cfg.CookieSecure, h.cfg.CookieSameSite)
+	clearRefresh := utils.BuildSetCookie("refresh_token", "", h.cfg.CookieDomain, -1, h.cfg.CookieSecure, h.cfg.CookieSameSite)
 
 	h.log.Info().Msg("logout")
 	utils.Reply(h.log, msg, 200,
@@ -232,11 +232,11 @@ func (h *Handlers) issueTokenCookies(ctx context.Context) (accessCookie, refresh
 
 	accessCookie = utils.BuildSetCookie(
 		"access_token", access, h.cfg.CookieDomain,
-		int(h.cfg.AccessTTL.Seconds()), h.cfg.CookieSecure,
+		int(h.cfg.AccessTTL.Seconds()), h.cfg.CookieSecure, h.cfg.CookieSameSite,
 	)
 	refreshCookie = utils.BuildSetCookie(
 		"refresh_token", refresh, h.cfg.CookieDomain,
-		int(h.cfg.RefreshTTL.Seconds()), h.cfg.CookieSecure,
+		int(h.cfg.RefreshTTL.Seconds()), h.cfg.CookieSecure, h.cfg.CookieSameSite,
 	)
 
 	return accessCookie, refreshCookie, nil
