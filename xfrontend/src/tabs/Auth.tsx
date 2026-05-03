@@ -3,7 +3,7 @@ import { apiCall } from '../api';
 
 export default function AuthTab() {
   const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('dev-password');
+  const [password, setPassword] = useState('password');
   const [out, setOut] = useState<string>('');
   const [busy, setBusy] = useState(false);
 
