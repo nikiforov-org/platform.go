@@ -205,6 +205,10 @@ runs:
 
             exec 10>/var/lock/platform-nomad-${NOMAD_FILE}.lock
             flock -w 300 -x 10 || { echo 'platform-nomad-${NOMAD_FILE}: lock busy >300s, aborting'; exit 1; }
+            echo "DEBUG: NOMAD_TOKEN length=\${#NOMAD_TOKEN}"
+            echo "DEBUG: NOMAD_TOKEN first8=\${NOMAD_TOKEN:0:8}"
+            echo "DEBUG: whoami=\$(whoami)"
+            sudo -E env | grep -c NOMAD || true
             sudo -E nomad job run /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
           "
 
