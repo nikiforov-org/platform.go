@@ -152,6 +152,7 @@ runs:
           # значения попадают в /proc/<pid>/environ (читаемо только владельцем),
           # в отличие от -var флагов, которые видны в world-readable cmdline.
           ENV_EXPORTS=""
+          SUDO_ENV_ARGS=""
           for VAR in $DECLARED; do
             case "$VAR" in
               ARCH)        VAL="$ARCH" ;;
@@ -164,6 +165,7 @@ runs:
               *)           VAL="${!VAR}" ;;
             esac
             ENV_EXPORTS="${ENV_EXPORTS}export NOMAD_VAR_${VAR}=$(printf '%q' "$VAL")"$'\n'
+            SUDO_ENV_ARGS="${SUDO_ENV_ARGS}NOMAD_VAR_${VAR}=$(printf '%q' "$VAL") "
           done
 
           Q_NOMAD_TOKEN=$(printf '%q' "$NOMAD_TOKEN")
@@ -183,8 +185,10 @@ runs:
           # локальный Nomad API — считаем ready-ноды. CI не знает число нод; при
           # изменении топологии кластера следующий деплой сам подхватит новое значение.
           NODES_EXPORT=""
+          NODES_SUDO_ARG=""
           if echo "$DECLARED" | grep -qx NODES; then
             NODES_EXPORT='export NOMAD_VAR_NODES=$(curl -sf -H "X-Nomad-Token: $NOMAD_TOKEN" http://127.0.0.1:4646/v1/nodes | jq '"'"'[.[] | select(.Status=="ready")] | length'"'"')'
+            NODES_SUDO_ARG='NOMAD_VAR_NODES=$NOMAD_VAR_NODES '
           fi
 
           REMOTE_SCRIPT="
@@ -205,7 +209,7 @@ runs:
 
             exec 10>/var/lock/platform-nomad-${NOMAD_FILE}.lock
             flock -w 300 -x 10 || { echo 'platform-nomad-${NOMAD_FILE}: lock busy >300s, aborting'; exit 1; }
-            sudo -E nomad job run -token=\"\$NOMAD_TOKEN\" /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
+            sudo env NOMAD_TOKEN=\"\$NOMAD_TOKEN\" ${SUDO_ENV_ARGS}${NODES_SUDO_ARG}nomad job run /opt/platform/deployments/infra/nomad/${NOMAD_FILE}
           "
 
           # Скрипт уходит на remote через SSH stdin (here-string + bash -s),
