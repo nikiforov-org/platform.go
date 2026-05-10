@@ -65,7 +65,7 @@ jobs:
           cache: false  # golangci-lint сам управляет кэшем
 
       - name: Golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           install-mode: goinstall
